@@ -6,6 +6,11 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License">
 </p>
 
+<p align="center">
+  <a href="https://frontend-mauve-eta-12.vercel.app"><strong>🚀 Live Application</strong></a> •
+  <a href="https://documentation-theta-six.vercel.app/"><strong>📚 Documentation</strong></a>
+</p>
+
 ## Overview
 
 SEALrfq (Sealed Encrypted Auction Ledger for Request for Quotation) is a privacy-preserving procurement protocol that leverages Fully Homomorphic Encryption (FHE) to enable confidential bidding in enterprise procurement.
