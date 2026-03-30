@@ -2,15 +2,15 @@
 
 import type { PublicClient, WalletClient } from 'viem';
 import {
-    CofheErrorCode,
+    CofhesdkErrorCode,
     Encryptable,
     FheTypes,
-    isCofheError,
-    type CofheClient,
+    isCofhesdkError,
+    type CofhesdkClient,
 } from '@cofhe/sdk';
 import { chains } from '@cofhe/sdk/chains';
 import type { Permit } from '@cofhe/sdk/permits';
-import { createCofheClient, createCofheConfig } from '@cofhe/sdk/web';
+import { createCofhesdkClient, createCofhesdkConfig } from '@cofhe/sdk/web';
 import { appChain } from '@/contexts/ProvableWalletProvider';
 import type { EncryptedBidInput } from './sealProtocol';
 
@@ -24,7 +24,7 @@ type DecryptForTxOptions = {
     permit?: Permit | string;
 };
 
-let cofheClient: CofheClient | null = null;
+let cofheClient: CofhesdkClient | null = null;
 let connectedClients: ConnectedClients | null = null;
 
 function getLiveBrowserClients(): ConnectedClients | null {
@@ -51,10 +51,10 @@ function getSupportedChain() {
     return chains.sepolia;
 }
 
-function getOrCreateClient(): CofheClient {
+function getOrCreateClient(): CofhesdkClient {
     if (!cofheClient) {
-        cofheClient = createCofheClient(
-            createCofheConfig({
+        cofheClient = createCofhesdkClient(
+            createCofhesdkConfig({
                 supportedChains: [getSupportedChain()],
             }),
         );
@@ -84,29 +84,29 @@ export function isCofheConnected(): boolean {
 }
 
 export function mapCofheError(error: unknown): string {
-    if (!isCofheError(error)) {
+    if (!isCofhesdkError(error)) {
         return error instanceof Error ? error.message : 'Unknown CoFHE error';
     }
 
     switch (error.code) {
-        case CofheErrorCode.NotConnected:
-        case CofheErrorCode.MissingWalletClient:
-        case CofheErrorCode.MissingPublicClient:
+        case CofhesdkErrorCode.NotConnected:
+        case CofhesdkErrorCode.MissingWalletClient:
+        case CofhesdkErrorCode.MissingPublicClient:
             return 'Connect your wallet on Ethereum Sepolia before using encrypted actions.';
-        case CofheErrorCode.UnsupportedChain:
-        case CofheErrorCode.ChainIdUninitialized:
+        case CofhesdkErrorCode.UnsupportedChain:
+        case CofhesdkErrorCode.ChainIdUninitialized:
             return 'Switch your wallet to Ethereum Sepolia and try again.';
-        case CofheErrorCode.PermitNotFound:
+        case CofhesdkErrorCode.PermitNotFound:
             return 'A decryption permit is missing. Approve a permit in your wallet and retry.';
-        case CofheErrorCode.InvalidPermitData:
-        case CofheErrorCode.InvalidPermitDomain:
+        case CofhesdkErrorCode.InvalidPermitData:
+        case CofhesdkErrorCode.InvalidPermitDomain:
             return 'The stored permit is invalid for this wallet or chain. Recreate the permit and retry.';
-        case CofheErrorCode.DecryptFailed:
-        case CofheErrorCode.DecryptReturnedNull:
+        case CofhesdkErrorCode.DecryptFailed:
+        case CofhesdkErrorCode.DecryptReturnedNull:
             return 'CoFHE decryption failed. Wait a moment and retry the request.';
-        case CofheErrorCode.ZkPackFailed:
-        case CofheErrorCode.ZkProveFailed:
-        case CofheErrorCode.ZkVerifyFailed:
+        case CofhesdkErrorCode.ZkPackFailed:
+        case CofhesdkErrorCode.ZkProveFailed:
+        case CofhesdkErrorCode.ZkVerifyFailed:
             return 'Encryption proof generation failed. Retry with a smaller encrypted payload.';
         default:
             return error.message;
@@ -139,7 +139,7 @@ export async function initCofheClient(
     }
 }
 
-async function requireConnectedClient(): Promise<CofheClient> {
+async function requireConnectedClient(): Promise<CofhesdkClient> {
     const client = getOrCreateClient();
     const liveClients = getLiveBrowserClients();
 
@@ -260,7 +260,7 @@ export async function decryptForView(
     }
 }
 
-export function getCofheClient(): CofheClient | null {
+export function getCofheClient(): CofhesdkClient | null {
     return cofheClient;
 }
 
