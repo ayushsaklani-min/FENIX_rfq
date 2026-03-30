@@ -1,0 +1,27 @@
+{
+    "name": "sealrfq-backend",
+    "scripts": {
+        "dev": "next dev -p 4000",
+        "build": "next build",
+        "start": "next start",
+        "db:migrate": "prisma migrate deploy --schema db/schema.prisma",
+        "db:generate": "prisma generate --schema db/schema.prisma"
+    },
+    "dependencies": {
+        "@prisma/client": "^5.9.0",
+        "@provablehq/sdk": "^0.9.17",
+        "@types/node": "^20.19.33",
+        "@types/react": "^18.3.28",
+        "ethers": "^6.15.0",
+        "ioredis": "^5.9.3",
+        "jose": "^5.9.6",
+        "next": "^14.1.0",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "typescript": "^5.3.3",
+        "zod": "^3.22.0"
+    },
+    "devDependencies": {
+        "prisma": "^5.9.0"
+    }
+}

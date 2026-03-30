@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# Vercel
+.vercel/
+
+# Documentation build files (not source)
+documentation/doc.html
+documentation/index.html
+documentation/.vercel/
+documentation/gallery*.png
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Package manager locks (keep package-lock.json in subdirs)
+/package-lock.json
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# Misc
+*.bak
+*.backup

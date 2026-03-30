@@ -1,0 +1,406 @@
+// Prisma Schema for sealRFQ V1 Backend
+// 
+// Features:
+// - Event versioning (event_version field)
+// - Idempotency (unique tx_id + transition + event_idx)
+// - Staging tables for pending events
+// - Reorg-safe checkpointing
+// - Full event-to-table parity with INTERFACE_LOCK.md
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// REORG-SAFE CHECKPOINTING
+// ============================================================================
+
+model IndexerCheckpoint {
+  id              Int       @id @default(autoincrement())
+  blockHeight     Int       @unique
+  blockHash       String
+  processedAt     DateTime  @default(now())
+  
+  // Rollback window: keep last N checkpoints for reorg recovery
+  isFinalized     Boolean   @default(false)
+  
+}
+
+// ============================================================================
+// AUTHENTICATION TABLES
+// ============================================================================
+
+/// Nonce challenges for wallet signature verification
+model AuthNonce {
+  id              String    @id @default(uuid())
+  nonce           String    @unique
+  walletAddress   String
+  expiresAt       DateTime
+  used            Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  
+  @@index([walletAddress])
+  @@index([expiresAt])
+}
+
+/// Active user sessions with refresh tokens
+model AuthSession {
+  id                    String    @id // UUID
+  walletAddress         String
+  role                  String    // BUYER | VENDOR | AUDITOR | NEW_USER
+  refreshToken          String    @unique
+  refreshTokenExpiresAt DateTime
+  isRevoked             Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  @@index([walletAddress])
+  @@index([refreshToken])
+  @@index([isRevoked])
+  @@index([refreshTokenExpiresAt])
+}
+
+
+// ============================================================================
+// STAGING TABLES (Pending Events)
+// ============================================================================
+
+/// Staging table for ALL pending events (before confirmation)
+model StagingEvent {
+  id                String    @id @default(uuid())
+  
+  // Idempotency key: tx_id + transition + event_idx
+  txId              String
+  transition        String
+  eventIdx          Int
+  
+  // Event data (JSON blob)
+  eventType         String
+  eventData         String
+  
+  // Metadata
+  blockHeight       Int?      // null if not yet in block
+  blockHash         String?
+  submittedAt       DateTime  @default(now())
+  
+  // Event versioning (HARD REQUIREMENT 1)
+  eventVersion      Int       @default(1)
+  
+  @@unique([txId, transition, eventIdx]) // HARD REQUIREMENT 2
+  @@index([txId])
+  @@index([eventType])
+}
+
+// ============================================================================
+// CONFIRMED BUSINESS STATE (7 Event Types)
+// ============================================================================
+
+// Event 1: RFQCreated
+model RFQ {
+  id                String      @id // rfq_id as hex string
+  buyer             String      // wallet address
+  biddingDeadline   Int         // u32
+  revealDeadline    Int         // u32
+  minBid            BigInt      // u64
+  status            String   @default("OPEN")
+  tokenType         Int         @default(0)
+  pricingMode       Int         @default(0)
+  auctionSource     String?
+  winnerAccepted    Boolean     @default(false)
+  paid              Boolean     @default(false)
+  receiptHash       String?
+
+  // Product details (stored off-chain; metadataHash committed on-chain)
+  itemName          String?
+  description       String?
+  quantity          String?     // stored as string to support decimals
+  unit              String?
+  metadataHash      String?     // SHA-256 hex of {itemName, description, quantity, unit}
+  
+  // Audit fields
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  createdBlock      Int
+  
+  // Event versioning (HARD REQUIREMENT 1)
+  eventVersion      Int         @default(1)
+  
+  // Idempotency (HARD REQUIREMENT 2)
+  createdTxId       String
+  createdEventIdx   Int
+  
+  // Relations
+  bids              Bid[]
+  escrow            Escrow?
+  payments          Payment[]
+  events            RFQEvent[]
+  
+  @@unique([createdTxId, createdEventIdx])
+  @@index([buyer])
+  @@index([status])
+  @@index([createdBlock])
+}
+
+// Event 2: BidCommitted
+model Bid {
+  id                String      @id // bid_id as hex string
+  rfqId             String
+  rfq               RFQ         @relation(fields: [rfqId], references: [id])
+  vendor            String      // wallet address
+  commitmentHash    String      // Field as hex
+  stake             BigInt      // u64
+  revealedAmount    BigInt?     // u64 (null until revealed)
+  isWinner          Boolean     @default(false)
+  isRevealed        Boolean     @default(false)
+  isSlashed         Boolean     @default(false)
+  isRefunded        Boolean     @default(false)
+  
+  // Audit fields
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  createdBlock      Int
+  revealedBlock     Int?
+  
+  // Event versioning
+  eventVersion      Int         @default(1)
+  
+  // Idempotency
+  createdTxId       String
+  createdEventIdx   Int
+  
+  @@unique([createdTxId, createdEventIdx])
+  @@unique([rfqId, vendor])   // One bid per vendor per RFQ
+  @@index([rfqId])
+  @@index([vendor])
+  @@index([isRevealed])
+  @@index([createdBlock])
+}
+
+// Event 7: EscrowFunded
+model Escrow {
+  id                String      @id @default(uuid())
+  rfqId             String      @unique
+  rfq               RFQ         @relation(fields: [rfqId], references: [id])
+  totalAmount       BigInt      // u64
+  releasedAmount    BigInt      @default(0)
+  isFinal           Boolean     @default(false)
+  
+  // Audit fields
+  fundedAt          DateTime    @default(now())
+  fundedBlock       Int
+  
+  // Event versioning
+  eventVersion      Int         @default(1)
+  
+  // Idempotency
+  fundedTxId        String
+  fundedEventIdx    Int
+  
+  @@unique([fundedTxId, fundedEventIdx])
+  @@index([rfqId])
+}
+
+// Event 8: PaymentReleased
+model Payment {
+  id                String      @id @default(uuid())
+  rfqId             String
+  rfq               RFQ         @relation(fields: [rfqId], references: [id])
+  recipient         String      // wallet address
+  amount            BigInt      // u64
+  isFinal           Boolean
+  
+  // Audit fields
+  releasedAt        DateTime    @default(now())
+  releasedBlock     Int
+  
+  // Event versioning
+  eventVersion      Int         @default(1)
+  
+  // Idempotency
+  releasedTxId      String
+  releasedEventIdx  Int
+  
+  @@unique([releasedTxId, releasedEventIdx])
+  @@index([rfqId])
+  @@index([recipient])
+  @@index([isFinal])
+}
+
+// ============================================================================
+// EVENT LOG (All 7 Event Types)
+// ============================================================================
+
+/// Immutable event log for audit trail
+model RFQEvent {
+  id                String      @id @default(uuid())
+  
+  // Event identification
+  eventType         String
+  rfqId             String?
+  rfq               RFQ?        @relation(fields: [rfqId], references: [id])
+  
+  // Event data (JSON)
+  eventData         String
+  
+  // Blockchain metadata
+  txId              String
+  transition        String
+  eventIdx          Int
+  blockHeight       Int
+  blockHash         String
+  
+  // Timestamps
+  processedAt       DateTime    @default(now())
+  
+  // Event versioning (HARD REQUIREMENT 1)
+  eventVersion      Int         @default(1)
+  
+  // Idempotency (HARD REQUIREMENT 2)
+  @@unique([txId, transition, eventIdx])
+  @@index([eventType])
+  @@index([rfqId])
+  @@index([blockHeight])
+  @@index([txId])
+}
+
+// ============================================================================
+// TRANSACTION TRACKING (STEP 4: Strict State Machine)
+// ============================================================================
+
+/// Transaction state machine: prepared -> submitted -> confirmed | rejected | expired
+model Transaction {
+  id                String      @id @default(uuid())
+  
+  // Dual Idempotency (REQUIREMENT 3)
+  // - Idempotency key: per submission attempt (retries get same key)
+  // - Canonical tx key: per logical action (identifies unique business intent)
+  idempotencyKey    String      @unique
+  canonicalTxKey    String      // e.g., "create_rfq:12345field" or "submit_bid:456field"
+  
+  // Transaction identification
+  txHash            String?     @unique // transaction hash (null until submitted)
+  transition        String      // Function name
+  programId         String      @default("sepolia-sealrfq")
+  
+  // State Machine (REQUIREMENT 1: strict one-way transitions)
+  status            String
+  statusHistory     String        @default("[]") // Array of {status, timestamp} for audit
+  
+  // Timestamps
+  preparedAt        DateTime    @default(now())
+  submittedAt       DateTime?
+  confirmedAt       DateTime?
+  rejectedAt        DateTime?
+  expiredAt         DateTime?
+  
+  // Blockchain metadata
+  blockHeight       Int?
+  blockHash         String?
+  
+  // Error tracking (REQUIREMENT 4: raw responses)
+  error             String?
+  errorCode         Int?
+  errorClass        String?  // TRANSIENT | LOGICAL | NETWORK
+  rawResponse       String?        // Full provider response for audit/debug
+  
+  // Retry tracking
+  retryCount        Int         @default(0)
+  maxRetries        Int         @default(3)
+  lastRetryAt       DateTime?
+  
+  // Expiration (REQUIREMENT 1: expired state)
+  expiresAt         DateTime?   // Auto-expire if not confirmed by this time
+  
+  // Reconciliation tracking (REQUIREMENT 5)
+  lastReconciledAt  DateTime?
+  reconcileAttempts Int         @default(0)
+  
+  @@index([status])
+  @@index([canonicalTxKey])
+  @@index([transition])
+  @@index([submittedAt])
+  @@index([expiresAt])
+}
+
+// ============================================================================
+// REORG RECOVERY LOG
+// ============================================================================
+
+model ReorgEvent {
+  id                Int         @id @default(autoincrement())
+  fromBlock         Int
+  toBlock           Int
+  fromHash          String
+  toHash            String
+  eventsRolledBack  Int
+  detectedAt        DateTime    @default(now())
+  recoveredAt       DateTime?
+  
+  @@index([fromBlock])
+  @@index([detectedAt])
+}
+
+model VickreyAuction {
+  id                String      @id
+  creator           String
+  rfqId             String?
+  createdTxHash     String      @unique
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  bids              VickreyBid[]
+
+  @@index([creator])
+  @@index([rfqId])
+  @@index([createdAt])
+}
+
+model VickreyBid {
+  id                String          @id
+  auctionId         String
+  auction           VickreyAuction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  vendor            String
+  createdTxHash     String          @unique
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([auctionId, vendor])
+  @@index([vendor])
+  @@index([auctionId])
+  @@index([createdAt])
+}
+
+model DutchAuction {
+  id                String            @id
+  creator           String
+  rfqId             String?
+  createdTxHash     String            @unique
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  acceptances       DutchAcceptance[]
+
+  @@index([creator])
+  @@index([rfqId])
+  @@index([createdAt])
+}
+
+model DutchAcceptance {
+  id                String        @id
+  auctionId         String
+  auction           DutchAuction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  bidder            String
+  createdTxHash     String        @unique
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@unique([auctionId, bidder])
+  @@index([bidder])
+  @@index([auctionId])
+  @@index([createdAt])
+}
+

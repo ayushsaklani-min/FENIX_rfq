@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "rootDir": ".",
+    "strict": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "ignoreDeprecations": "6.0",
+    "types": ["node", "mocha"]
+  },
+  "include": [
+    "./scripts/**/*.ts",
+    "./test/**/*.ts"
+  ]
+}

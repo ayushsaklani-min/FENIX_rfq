@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "strict": false,
+    "types": ["node"]
+  },
+  "include": [
+    "index.ts",
+    "api/**/*.ts",
+    "auth/**/*.ts",
+    "indexer/**/*.ts",
+    "middleware/**/*.ts",
+    "tx/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tests",
+    "audit"
+  ]
+}

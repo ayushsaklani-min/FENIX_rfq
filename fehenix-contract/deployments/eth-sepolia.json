@@ -1,0 +1,16 @@
+{
+  "network": "eth-sepolia",
+  "chainId": 11155111,
+  "deployer": "0x060613A360fFe3213818c022b404E5AA9D755611",
+  "confirmations": 2,
+  "deployedAt": "2026-03-30T09:50:36.639Z",
+  "tokenImplementation": "SealDemoFHERC20Permit",
+  "token": "0x062A8A88254B23c8E0e75EC3d0F95f92d3a682D5",
+  "token1": "0x062A8A88254B23c8E0e75EC3d0F95f92d3a682D5",
+  "token2": "0x062A8A88254B23c8E0e75EC3d0F95f92d3a682D5",
+  "stakeToken": "0x062A8A88254B23c8E0e75EC3d0F95f92d3a682D5",
+  "sealVickrey": "0x2e1c05C474D92D52ce265f8CB5Cfe562C2BC1D42",
+  "sealDutch": "0xE69e123db61227699808AfCba4213cCA829A0501",
+  "sealInvoice": "0x91fE02b3Ff4737fB8d7336004D122D488cA51c8F",
+  "sealRFQ": "0xF6E986D3ED172322984e3e10E60Ba8a899959078"
+}
