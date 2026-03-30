@@ -1,13 +1,7 @@
 /** @type {import('next').NextConfig} */
-const path = require('path');
 const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:3000';
-const COFHE_SDK_DIST = path.resolve(__dirname, '../fehenix-contract/node_modules/@cofhe/sdk/dist');
 
 const nextConfig = {
-    experimental: {
-        externalDir: true,
-    },
-
     // Bundle size optimization
     compress: true,
 
@@ -33,16 +27,6 @@ const nextConfig = {
 
     // Webpack bundle analyzer (enable with ANALYZE=true)
     webpack: (config, { isServer }) => {
-        config.resolve = config.resolve || {};
-        config.resolve.alias = {
-            ...(config.resolve.alias || {}),
-            '@cofhe/sdk': path.join(COFHE_SDK_DIST, 'core.js'),
-            '@cofhe/sdk/web': path.join(COFHE_SDK_DIST, 'web.js'),
-            '@cofhe/sdk/node': path.join(COFHE_SDK_DIST, 'node.js'),
-            '@cofhe/sdk/chains': path.join(COFHE_SDK_DIST, 'chains.js'),
-            '@cofhe/sdk/permits': path.join(COFHE_SDK_DIST, 'permits.js'),
-        };
-
         if (process.env.ANALYZE === 'true') {
             const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
             config.plugins.push(
@@ -65,3 +49,4 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
+
