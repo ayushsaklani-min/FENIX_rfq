@@ -2,13 +2,13 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Blockchain-Ethereum-blue" alt="Ethereum">
-  <img src="https://img.shields.io/badge/Privacy-FHE-green" alt="FHE">.
+  <img src="https://img.shields.io/badge/Privacy-FHE-green" alt="FHE">
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License">
 </p>
 
 <p align="center">
   <a href="https://frontend-mauve-eta-12.vercel.app"><strong>🚀 Live Application</strong></a> •
-  <a href="https://documentation-theta-six.vercel.app/"><strong>📚 Documentation</strong></a>
+  <a href="https://documentation-theta-six.vercel.app/"><strong>📚 Documentation</strong></a> •
    <a href="https://youtu.be/yPO8uzswaTE"><strong>Demo_Video</strong></a>
 </p>
 
