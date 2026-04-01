@@ -2,7 +2,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Blockchain-Ethereum-blue" alt="Ethereum">
-  <img src="https://img.shields.io/badge/Privacy-FHE-green" alt="FHE">,
+  <img src="https://img.shields.io/badge/Privacy-FHE-green" alt="FHE">.
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License">
 </p>
 
