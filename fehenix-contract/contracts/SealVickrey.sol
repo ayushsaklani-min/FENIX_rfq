@@ -73,6 +73,7 @@ contract SealVickrey is ReentrancyGuard, ISealAuction, IFHERC20Receiver {
     mapping(bytes32 => bytes32) public pendingTransferCheckCt;
     mapping(bytes32 => PendingBidTransfer) public pendingBidTransfers;
     mapping(bytes32 => uint64) public pendingBidCount;
+    mapping(bytes32 => mapping(bytes32 => address)) private pendingCallbackBidders;
     uint256 public transferVerificationNonce;
 
     event AuctionCreated(
@@ -180,22 +181,6 @@ contract SealVickrey is ReentrancyGuard, ISealAuction, IFHERC20Receiver {
 
         ebool validRange = FHE.lt(bidAmount, _encryptedMaxBidAmount);
 
-        euint64 encryptedStake = FHE.asEuint64(auction.flatStake);
-        FHE.allowTransient(encryptedStake, address(stakeToken));
-
-        euint64 transferred = stakeToken.confidentialTransferFromAndCall(
-            bidder,
-            address(this),
-            encryptedStake,
-            abi.encode(auctionId, bidId)
-        );
-        bytes32 transferId = _queueTransferCheck(
-            keccak256(abi.encodePacked("vickrey-commit", auctionId, bidId)),
-            transferred,
-            encryptedStake
-        );
-        FHE.allowSender(transferred);
-
         bidRangeChecks[auctionId][bidId] = validRange;
         FHE.allowThis(bidRangeChecks[auctionId][bidId]);
         bids[auctionId][bidId] = Bid({
@@ -207,6 +192,29 @@ contract SealVickrey is ReentrancyGuard, ISealAuction, IFHERC20Receiver {
         });
         FHE.allowThis(bids[auctionId][bidId].encryptedAmount);
         FHE.allow(bids[auctionId][bidId].encryptedAmount, bidder);
+        pendingCallbackBidders[auctionId][bidId] = bidder;
+
+        euint64 encryptedStake = FHE.asEuint64(auction.flatStake);
+        FHE.allowTransient(encryptedStake, address(stakeToken));
+
+        euint64 transferred = stakeToken.confidentialTransferFromAndCall(
+            bidder,
+            address(this),
+            encryptedStake,
+            abi.encode(auctionId, bidId)
+        );
+        delete pendingCallbackBidders[auctionId][bidId];
+
+        ebool bidAccepted = FHE.and(FHE.eq(transferred, encryptedStake), validRange);
+        FHE.allowThis(bidAccepted);
+        FHE.allowPublic(bidAccepted);
+
+        bytes32 transferId = keccak256(abi.encodePacked(address(this), keccak256(abi.encodePacked("vickrey-commit", auctionId, bidId)), transferVerificationNonce));
+        transferVerificationNonce++;
+        pendingTransferCheckCt[transferId] = ebool.unwrap(bidAccepted);
+        emit TransferVerificationRequested(transferId, ebool.unwrap(bidAccepted));
+        FHE.allowSender(transferred);
+
         hasVendorBid[auctionId][bidder] = true;
         pendingBidCount[auctionId]++;
 
@@ -481,16 +489,21 @@ contract SealVickrey is ReentrancyGuard, ISealAuction, IFHERC20Receiver {
                 auction.bidCount++;
 
                 euint64 bidAmount = bid.encryptedAmount;
+                euint64 candidateBidAmount = FHE.select(
+                    bidRangeChecks[pending.auctionId][pending.bidId],
+                    bidAmount,
+                    _encryptedMaxBidAmount
+                );
                 euint64 currentLowest = encryptedLowestBid[pending.auctionId];
                 euint64 currentSecond = encryptedSecondLowestBid[pending.auctionId];
                 eaddress currentLowestBidder = encryptedLowestBidder[pending.auctionId];
 
-                ebool isLowerThanLowest = FHE.lt(bidAmount, currentLowest);
-                ebool isLowerThanSecond = FHE.lt(bidAmount, currentSecond);
+                ebool isLowerThanLowest = FHE.lt(candidateBidAmount, currentLowest);
+                ebool isLowerThanSecond = FHE.lt(candidateBidAmount, currentSecond);
 
-                euint64 newLowest = FHE.select(isLowerThanLowest, bidAmount, currentLowest);
+                euint64 newLowest = FHE.select(isLowerThanLowest, candidateBidAmount, currentLowest);
                 euint64 oldLowestAsSecond = FHE.select(isLowerThanLowest, currentLowest, currentSecond);
-                euint64 candidateSecond = FHE.select(isLowerThanSecond, bidAmount, currentSecond);
+                euint64 candidateSecond = FHE.select(isLowerThanSecond, candidateBidAmount, currentSecond);
                 euint64 newSecond = FHE.select(isLowerThanLowest, oldLowestAsSecond, candidateSecond);
 
                 eaddress newBidderEncrypted = FHE.asEaddress(pending.bidder);
@@ -534,13 +547,13 @@ contract SealVickrey is ReentrancyGuard, ISealAuction, IFHERC20Receiver {
         if (auction.status != AuctionStatus.Open || block.number >= auction.biddingDeadline) {
             return _rejectTransfer();
         }
-        if (bidId == bytes32(0) || bids[auctionId][bidId].owner != address(0) || hasVendorBid[auctionId][from]) {
+        if (bidId == bytes32(0) || pendingCallbackBidders[auctionId][bidId] != from) {
             return _rejectTransfer();
         }
 
         euint64 requiredStake = FHE.asEuint64(auction.flatStake);
         ebool stakeMatches = FHE.eq(amount, requiredStake);
         FHE.allow(amount, from);
-        return _allowCallbackResult(stakeMatches);
+        return _allowCallbackResult(FHE.and(stakeMatches, bidRangeChecks[auctionId][bidId]));
     }
 }

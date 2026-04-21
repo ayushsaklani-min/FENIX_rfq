@@ -8,7 +8,6 @@ import {
     syncIndexedRfqBid,
     syncIndexedRfqBidsFromChain,
     syncIndexedRfqEscrow,
-    syncIndexedRfqWinnerFlags,
 } from '../../../lib/fhenixIndexing';
 import { prisma } from '../../../lib/prismaClient';
 import {
@@ -66,8 +65,7 @@ const PublishLowestBidSchema = z.object({
 });
 
 const SelectWinnerSchema = z.object({
-    bidId: bytes32Schema,
-    plaintext: u64StringSchema,
+    winnerAddress: addressSchema,
     signature: z.string().regex(hexBytesRegex, 'signature must be hex bytes'),
     txHash: z.string().optional(),
 });
@@ -167,6 +165,7 @@ async function getRfqSnapshot(rfqId: string) {
         invoiceReceipt,
         importedPrice,
         lowestEncryptedBidCtHash,
+        lowestEncryptedBidderCtHash,
         lowestBidReveal,
         bidIds,
         platformConfig,
@@ -181,6 +180,7 @@ async function getRfqSnapshot(rfqId: string) {
         sealRfq.invoiceReceipts(rfqId),
         sealRfq.importedWinnerPrice(rfqId),
         sealRfq.lowestEncryptedBid(rfqId),
+        sealRfq.lowestEncryptedBidder(rfqId),
         sealRfq.getLowestBidReveal(rfqId),
         sealRfq.getBidIds(rfqId),
         sealRfq.platformConfig(),
@@ -225,6 +225,7 @@ async function getRfqSnapshot(rfqId: string) {
         invoiceReceipt: String(invoiceReceipt),
         importedWinnerPrice: BigInt(importedPrice).toString(),
         lowestEncryptedBidCtHash: String(lowestEncryptedBidCtHash),
+        lowestEncryptedBidderCtHash: String(lowestEncryptedBidderCtHash),
         lowestPublishedBid: BigInt(lowestBidReveal.amount).toString(),
         lowestBidPublished: Boolean(lowestBidReveal.published),
         bidIds: bidIds.map((bidId: string) => String(bidId)),
@@ -806,20 +807,19 @@ export async function handleFhenixSelectWinner(request: NextRequest, rfqId: stri
         if (!data.txHash) {
             const tx = await sealRfq.selectWinner.populateTransaction(
                 rfqId,
-                data.bidId,
-                BigInt(data.plaintext),
+                data.winnerAddress,
                 data.signature,
             );
             return NextResponse.json({
                 status: 'success',
-                data: { rfqId, bidId: data.bidId, tx: await buildTxRequest(tx.to as string, tx.data as string) },
+                data: { rfqId, winnerAddress: data.winnerAddress, tx: await buildTxRequest(tx.to as string, tx.data as string) },
             });
         }
 
         await syncIndexedRfq(rfqId, { txHash: data.txHash }, prisma);
-        await syncIndexedRfqWinnerFlags(rfqId, prisma);
+        await syncIndexedRfqBidsFromChain(rfqId, prisma);
 
-        return NextResponse.json({ status: 'success', data: { rfqId, bidId: data.bidId, txHash: data.txHash } });
+        return NextResponse.json({ status: 'success', data: { rfqId, winnerAddress: data.winnerAddress, txHash: data.txHash } });
     } catch (error: any) {
         return badRequest(error.message || 'Invalid request payload');
     }

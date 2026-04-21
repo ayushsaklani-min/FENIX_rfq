@@ -131,8 +131,8 @@ export default function BuyerRfqDetailPage({ params }: { params: { id: string } 
                 label: 'Open winner selection',
                 href: `/buyer/rfqs/${encodeURIComponent(rfq.id)}/select-winner`,
                 description: rfq.lowestBidPublished
-                    ? 'Paste the bidder proof package and select the winning bid.'
-                    : 'Publish the lowest encrypted bid proof, then select the winner.',
+                    ? 'Finalize the lowest bidder from the contract-managed winner ciphertext.'
+                    : 'Close bidding if needed, publish the lowest encrypted bid, then finalize the winner.',
             };
         }
 

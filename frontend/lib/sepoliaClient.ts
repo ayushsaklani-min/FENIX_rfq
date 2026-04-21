@@ -132,9 +132,9 @@ export async function estimateGas(params: {
 
 export async function readContract<T>(params: {
     address: `0x${string}`;
-    abi: any[];
+    abi: readonly any[];
     functionName: string;
-    args?: any[];
+    args?: readonly any[];
 }): Promise<T | null> {
     try {
         const client = getPublicClient();

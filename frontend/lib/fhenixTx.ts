@@ -309,14 +309,13 @@ export async function submitBidTx(
 }
 
 /**
- * Select winner transaction (with FHE decrypt proof)
+ * Select winner transaction (with encrypted lowest-bidder decrypt proof)
  */
 export async function selectWinnerTx(
     walletClient: any,
     params: {
         rfqId: string;
-        bidId: string;
-        plaintext: string;
+        winnerAddress: string;
         signature: string;
     },
     onTxHash?: (hash: Hash) => void,
@@ -325,8 +324,7 @@ export async function selectWinnerTx(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            bidId: params.bidId,
-            plaintext: params.plaintext,
+            winnerAddress: params.winnerAddress,
             signature: params.signature,
         }),
     });
@@ -415,7 +413,7 @@ export async function releasePaymentTx(
     walletClient: any,
     params: {
         rfqId: string;
-        amount: string;
+        percentage: number;
     },
     onTxHash?: (hash: Hash) => void,
 ): Promise<TxResult> {
@@ -423,7 +421,7 @@ export async function releasePaymentTx(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            amount: params.amount,
+            percentage: params.percentage,
         }),
     });
 
@@ -517,7 +515,7 @@ export async function vickreyCommitBidTx(
     },
     onTxHash?: (hash: Hash) => void,
 ): Promise<TxResult & { bidId: string }> {
-    const response = await authenticatedFetch(`/api/fhenix/auction/vickrey/${params.auctionId}/commit`, {
+    const response = await authenticatedFetch(`/api/fhenix/auction/vickrey/${params.auctionId}/bids`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

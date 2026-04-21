@@ -166,8 +166,8 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
             }
 
             const approved = await readContract<boolean>({
-                address: CONTRACT_ADDRESSES.stakeToken as `0x${string}`,
-                abi: FHERC20_OPERATOR_ABI as any[],
+                address: CONTRACT_ADDRESSES.stakeToken,
+                abi: FHERC20_OPERATOR_ABI,
                 functionName: 'isOperator',
                 args: [walletAddress, CONTRACT_ADDRESSES.vickrey],
             });
@@ -216,7 +216,7 @@ export default function VickreyDetailPage({ params }: { params: { auctionId: str
 
             const result = await executeSimpleTx({
                 to: CONTRACT_ADDRESSES.stakeToken,
-                data,
+                data: data as `0x${string}`,
                 value: '0',
                 chainId: Number(process.env.NEXT_PUBLIC_FHENIX_CHAIN_ID || '11155111'),
             });

@@ -2,6 +2,7 @@ const hre = require("hardhat");
 const { expect } = require("chai");
 const {
   createClient,
+  decryptAddressForTx,
   decryptUint64ForTx,
   decryptUint64ForView,
   getEventArgs,
@@ -85,10 +86,10 @@ describe("SealRFQ", function () {
     return proof;
   }
 
-  async function selectWinnerFromBid(rfqId, bidId, bidderClient) {
-    const bid = await sealRFQ.bids(rfqId, bidId);
-    const proof = await decryptUint64ForTx(bidderClient, bid.encryptedAmount, true);
-    await (await sealRFQ.connect(creator).selectWinner(rfqId, bidId, proof.decryptedValue, proof.signature)).wait();
+  async function selectWinnerFromLowestBidder(rfqId) {
+    const winnerCt = await sealRFQ.lowestEncryptedBidder(rfqId);
+    const proof = await decryptAddressForTx(creatorClient, winnerCt, false);
+    await (await sealRFQ.connect(creator).selectWinner(rfqId, proof.decryptedAddress, proof.signature)).wait();
     return proof;
   }
 
@@ -141,7 +142,7 @@ describe("SealRFQ", function () {
     await publishLowestBid(rfqId);
 
     await mineBlocks(revealDeadline - (await latestBlock()));
-    await selectWinnerFromBid(rfqId, bidId2, vendor2Client);
+    await selectWinnerFromLowestBidder(rfqId);
 
     const winnerState = await sealRFQ.getRFQ(rfqId);
     expect(winnerState.winnerAddress).to.equal(vendor2.address);
@@ -162,6 +163,44 @@ describe("SealRFQ", function () {
     expect(escrow.currentAmount).to.equal(55n);
     expect(escrow.totalReleased).to.equal(55n);
     await hre.cofhe.mocks.expectPlaintext(await token1.confidentialBalanceOf(vendor2.address), 250_055n);
+  });
+
+  it("does not mutate escrow state until release transfer verification is confirmed", async function () {
+    const { rfqId, biddingDeadline, revealDeadline } = await createRfqFixture({ minBidCount: 1 });
+    const winningBidId = hre.ethers.id("gated-release-winner");
+
+    await setOperatorFor(token1, vendor1, await sealRFQ.getAddress());
+    await submitBidAndVerify(vendor1, vendor1Client, rfqId, winningBidId, 110);
+
+    await moveToReveal(rfqId, biddingDeadline);
+    await publishLowestBid(rfqId);
+    await mineBlocks(revealDeadline - (await latestBlock()));
+    await selectWinnerFromLowestBidder(rfqId);
+
+    const winnerResponseReceipt = await (await sealRFQ.connect(vendor1).winnerRespond(rfqId, true)).wait();
+    await confirmTransferFromReceipt(sealRFQ, winnerResponseReceipt, vendor1Client);
+
+    await setOperatorFor(token1, creator, await sealRFQ.getAddress());
+    const escrowReceipt = await (await sealRFQ.connect(creator).fundEscrowToken(rfqId, TOKEN1, 110)).wait();
+    await confirmTransferFromReceipt(sealRFQ, escrowReceipt, creatorClient);
+
+    const releaseReceipt = await (await sealRFQ.connect(creator).releasePartialPayment(rfqId, 50)).wait();
+
+    let rfq = await sealRFQ.getRFQ(rfqId);
+    let escrow = await sealRFQ.getEscrow(rfqId);
+    expect(rfq.status).to.equal(4n);
+    expect(rfq.finalPaymentReleased).to.equal(false);
+    expect(escrow.currentAmount).to.equal(110n);
+    expect(escrow.totalReleased).to.equal(0n);
+
+    await confirmTransferFromReceipt(sealRFQ, releaseReceipt, vendor1Client);
+
+    rfq = await sealRFQ.getRFQ(rfqId);
+    escrow = await sealRFQ.getEscrow(rfqId);
+    expect(rfq.status).to.equal(4n);
+    expect(rfq.finalPaymentReleased).to.equal(false);
+    expect(escrow.currentAmount).to.equal(55n);
+    expect(escrow.totalReleased).to.equal(55n);
   });
 
   it("imports a trusted auction result", async function () {
@@ -197,7 +236,7 @@ describe("SealRFQ", function () {
     await moveToReveal(rfqId, biddingDeadline);
     await publishLowestBid(rfqId);
     await mineBlocks(revealDeadline - (await latestBlock()));
-    await selectWinnerFromBid(rfqId, winnerBidId, vendor2Client);
+    await selectWinnerFromLowestBidder(rfqId);
 
     const rejectReceipt = await (await sealRFQ.connect(vendor2).winnerRespond(rfqId, false)).wait();
     await confirmTransferFromReceipt(sealRFQ, rejectReceipt, creatorClient);
@@ -219,7 +258,7 @@ describe("SealRFQ", function () {
     await moveToReveal(rfqId, biddingDeadline);
     await publishLowestBid(rfqId);
     await mineBlocks(revealDeadline - (await latestBlock()));
-    await selectWinnerFromBid(rfqId, bidId, vendor1Client);
+    await selectWinnerFromLowestBidder(rfqId);
 
     await mineBlocks(2161);
     const slashReceipt = await (await sealRFQ.connect(creator).slashNonRevealer(rfqId, bidId)).wait();
@@ -253,7 +292,7 @@ describe("SealRFQ", function () {
     await moveToReveal(cancel2.rfqId, cancel2.biddingDeadline);
     await publishLowestBid(cancel2.rfqId);
     await mineBlocks(cancel2.revealDeadline - (await latestBlock()));
-    await selectWinnerFromBid(cancel2.rfqId, cancel2Bid, vendor1Client);
+    await selectWinnerFromLowestBidder(cancel2.rfqId);
     await mineBlocks(2161);
     await (await sealRFQ.connect(creator).cancelRFQ(cancel2.rfqId, 2)).wait();
     expect((await sealRFQ.getRFQ(cancel2.rfqId)).status).to.equal(6n);
@@ -264,6 +303,26 @@ describe("SealRFQ", function () {
     await mineBlocks(cancel4.biddingDeadline - (await latestBlock()) + 1541);
     await (await sealRFQ.connect(other).cancelRFQ(cancel4.rfqId, 4)).wait();
     expect((await sealRFQ.getRFQ(cancel4.rfqId)).status).to.equal(6n);
+  });
+
+  it("does not let a below-minimum encrypted bid replace the tracked lowest bid", async function () {
+    const { rfqId } = await createRfqFixture({ minBid: 100, minBidCount: 2 });
+    const validBidId = hre.ethers.id("valid-bid");
+    const invalidBidId = hre.ethers.id("invalid-below-minimum");
+
+    await Promise.all([
+      setOperatorFor(token1, vendor1, await sealRFQ.getAddress()),
+      setOperatorFor(token1, vendor2, await sealRFQ.getAddress())
+    ]);
+
+    await submitBidAndVerify(vendor1, vendor1Client, rfqId, validBidId, 140);
+    await submitBidAndVerify(vendor2, vendor2Client, rfqId, invalidBidId, 80);
+
+    const rfq = await sealRFQ.getRFQ(rfqId);
+    await hre.cofhe.mocks.expectPlaintext(await sealRFQ.lowestEncryptedBid(rfqId), 140n);
+    expect(rfq.bidCount).to.equal(1n);
+    await mineBlocks(Number(rfq.biddingDeadline) - (await latestBlock()) + 1);
+    await expect(sealRFQ.closeBidding(rfqId)).to.be.revertedWithCustomError(sealRFQ, "NotEnoughBids");
   });
 
   it("rejects callback calls with wrong token, wrong operator, and malformed data", async function () {

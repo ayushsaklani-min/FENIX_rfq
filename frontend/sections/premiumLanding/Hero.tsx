@@ -72,7 +72,7 @@ export function Hero({
 
     return (
         <section id="hero" className="relative flex min-h-screen flex-col justify-center overflow-hidden pb-32 pt-20 md:pt-24">
-            <div className={`absolute inset-0 transition-opacity duration-[1500ms] ease-out ${phase >= 1 ? 'opacity-100' : 'opacity-0'}`}>
+            <div className={`absolute inset-0 transition-opacity ease-out ${phase >= 1 ? 'opacity-100' : 'opacity-0'}`} style={{ transitionDuration: '1500ms' }}>
                 <div className="hero-kenburns absolute inset-0">
                     <img src={heroConfig.backgroundImage} alt="SealRFQ landing background" className="h-full w-full scale-105 object-cover" />
                 </div>

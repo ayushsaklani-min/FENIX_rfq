@@ -120,6 +120,13 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         EscrowFunding
     }
 
+    enum PendingSettlementAction {
+        None,
+        ReleasePayment,
+        CreatorReclaimEscrow,
+        WinnerClaimEscrow
+    }
+
     struct PlatformConfig {
         address admin;
         uint256 feeBps;
@@ -175,23 +182,33 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         uint64 amount;
     }
 
+    struct PendingSettlementTransfer {
+        PendingSettlementAction action;
+        bytes32 rfqId;
+        address recipient;
+        uint64 amount;
+        uint64 fee;
+        uint8 percentage;
+    }
+
     PlatformConfig public platformConfig;
     IFHERC20 public token1;
     IFHERC20 public token2;
     address public sealInvoiceAddress;
     euint64 private immutable _encryptedMaxBidAmount;
 
-    mapping(bytes32 => RFQ) public rfqs;
+    mapping(bytes32 => RFQ) private rfqs;
     mapping(bytes32 => mapping(bytes32 => Bid)) public bids;
     mapping(bytes32 => mapping(bytes32 => ebool)) public bidRangeChecks;
     mapping(bytes32 => bytes32[]) private rfqBidIds;
     mapping(bytes32 => bytes32) public winnerBids;
-    mapping(bytes32 => Escrow) public escrows;
+    mapping(bytes32 => eaddress) public lowestEncryptedBidder;
+    mapping(bytes32 => Escrow) private escrows;
     mapping(bytes32 => euint64) public lowestEncryptedBid;
-    mapping(bytes32 => bytes32) public lowestBidId;
-    mapping(bytes32 => uint64) public lowestPublishedBid;
-    mapping(bytes32 => bool) public lowestBidPublished;
-    mapping(bytes32 => mapping(address => bool)) public hasVendorBid;
+    mapping(bytes32 => uint64) private lowestPublishedBid;
+    mapping(bytes32 => bool) private lowestBidPublished;
+    mapping(bytes32 => mapping(address => bool)) private hasVendorBid;
+    mapping(bytes32 => mapping(address => bytes32)) private vendorBidIds;
     mapping(address => bool) public trustedAuctionContracts;
     mapping(bytes32 => bytes32) public auctionSource;
     mapping(bytes32 => uint64) public importedWinnerPrice;
@@ -199,8 +216,11 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
     mapping(bytes32 => bytes32) public pendingTransferCheckCt;
     mapping(bytes32 => PendingBidTransfer) private pendingBidTransfers;
     mapping(bytes32 => uint64) private pendingBidCount;
+    mapping(bytes32 => mapping(bytes32 => address)) private pendingCallbackBidders;
     mapping(bytes32 => PendingEscrowFunding) private pendingEscrowFundingTransfers;
     mapping(bytes32 => bytes32) private pendingEscrowTransferId;
+    mapping(bytes32 => PendingSettlementTransfer) private pendingSettlementTransfers;
+    mapping(bytes32 => bytes32) private pendingSettlementTransferId;
     uint256 public transferVerificationNonce;
 
     event PlatformConfigured(address indexed admin, uint256 feeBps, bool paused);
@@ -301,12 +321,12 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         address to,
         uint64 amount,
         bytes32 transferScope
-    ) internal {
+    ) internal returns (bytes32 transferId) {
         euint64 encryptedAmount = FHE.asEuint64(amount);
         FHE.allowTransient(encryptedAmount, address(token));
 
         euint64 transferred = token.confidentialTransfer(to, encryptedAmount);
-        _queueTransferCheck(transferScope, transferred, encryptedAmount);
+        transferId = _queueTransferCheck(transferScope, transferred, encryptedAmount);
         FHE.allow(transferred, to);
     }
 
@@ -355,22 +375,6 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         ebool belowMax = FHE.lte(bidAmount, _encryptedMaxBidAmount);
         ebool validRange = FHE.and(aboveMin, belowMax);
 
-        euint64 encryptedStake = FHE.asEuint64(rfq.flatStake);
-        FHE.allowTransient(encryptedStake, address(stakeToken));
-
-        euint64 transferred = stakeToken.confidentialTransferFromAndCall(
-            bidder,
-            address(this),
-            encryptedStake,
-            abi.encode(uint8(TransferPurpose.BidStake), rfqId, bidId, rfq.flatStake)
-        );
-        bytes32 transferId = _queueTransferCheck(
-            keccak256(abi.encodePacked("rfq-bid-stake", rfqId, bidId)),
-            transferred,
-            encryptedStake
-        );
-        FHE.allowSender(transferred);
-
         bidRangeChecks[rfqId][bidId] = validRange;
         FHE.allowThis(bidRangeChecks[rfqId][bidId]);
         bids[rfqId][bidId] = Bid({
@@ -382,7 +386,31 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         });
         FHE.allowThis(bids[rfqId][bidId].encryptedAmount);
         FHE.allow(bids[rfqId][bidId].encryptedAmount, bidder);
+        pendingCallbackBidders[rfqId][bidId] = bidder;
+
+        euint64 encryptedStake = FHE.asEuint64(rfq.flatStake);
+        FHE.allowTransient(encryptedStake, address(stakeToken));
+
+        euint64 transferred = stakeToken.confidentialTransferFromAndCall(
+            bidder,
+            address(this),
+            encryptedStake,
+            abi.encode(uint8(TransferPurpose.BidStake), rfqId, bidId, rfq.flatStake)
+        );
+        delete pendingCallbackBidders[rfqId][bidId];
+
+        ebool bidAccepted = FHE.and(FHE.eq(transferred, encryptedStake), validRange);
+        FHE.allowThis(bidAccepted);
+        FHE.allowPublic(bidAccepted);
+
+        bytes32 transferId = keccak256(abi.encodePacked(address(this), keccak256(abi.encodePacked("rfq-bid-stake", rfqId, bidId)), transferVerificationNonce));
+        transferVerificationNonce++;
+        pendingTransferCheckCt[transferId] = ebool.unwrap(bidAccepted);
+        emit TransferVerificationRequested(transferId, ebool.unwrap(bidAccepted));
+        FHE.allowSender(transferred);
+
         hasVendorBid[rfqId][bidder] = true;
+        vendorBidIds[rfqId][bidder] = bidId;
         pendingBidCount[rfqId]++;
 
         pendingBidTransfers[transferId] = PendingBidTransfer({
@@ -502,6 +530,7 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         if (rfqs[rfqId].creator == address(0)) revert RfqNotFound();
         require(rfqs[rfqId].status == RFQStatus.EscrowFunded, "Invalid status");
         if (rfqs[rfqId].paid) revert AlreadyPaid();
+        if (pendingSettlementTransferId[rfqId] != bytes32(0)) revert PendingTransferVerification();
         
         rfqs[rfqId].paid = true;
         invoiceReceipts[rfqId] = receiptId;
@@ -559,7 +588,9 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         });
 
         lowestEncryptedBid[rfqId] = _encryptedMaxBidAmount;
+        lowestEncryptedBidder[rfqId] = FHE.asEaddress(address(0));
         FHE.allowThis(lowestEncryptedBid[rfqId]);
+        FHE.allowThis(lowestEncryptedBidder[rfqId]);
         
         emit RFQCreated(rfqId, msg.sender, biddingDeadline, revealDeadline);
     }
@@ -598,13 +629,11 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         if (rfq.bidCount < rfq.minBidCount) revert NotEnoughBids();
         
         if (msg.sender != rfq.creator) {
-            require(
-                block.number >= rfq.biddingDeadline + PERMISSIONLESS_CLOSE_DELAY,
-                "Only creator can close before permissionless window"
-            );
+            if (block.number < rfq.biddingDeadline + PERMISSIONLESS_CLOSE_DELAY) revert OnlyCreator();
         }
         
         FHE.allowPublic(lowestEncryptedBid[rfqId]);
+        FHE.allowPublic(lowestEncryptedBidder[rfqId]);
         
         rfq.status = RFQStatus.Reveal;
     }
@@ -673,6 +702,7 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         FHE.allowThis(bids[rfqId][syntheticBidId].encryptedAmount);
         FHE.allow(bids[rfqId][syntheticBidId].encryptedAmount, winner);
         winnerBids[rfqId] = syntheticBidId;
+        vendorBidIds[rfqId][winner] = syntheticBidId;
         hasVendorBid[rfqId][winner] = true;
         
         rfq.winnerAddress = winner;
@@ -703,36 +733,34 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
     
     function selectWinner(
         bytes32 rfqId,
-        bytes32 bidId,
-        uint64 plaintext,
+        address winnerPlaintext,
         bytes calldata signature
     ) external rfqExists(rfqId) {
         RFQ storage rfq = rfqs[rfqId];
-        Bid storage bid = bids[rfqId][bidId];
         
         if (msg.sender != rfq.creator) revert OnlyCreator();
         if (rfq.status != RFQStatus.Reveal) revert NotInRevealPhase();
         if (block.number < rfq.revealDeadline) revert RevealNotEnded();
         if (!lowestBidPublished[rfqId]) revert PublishLowestBidFirst();
-        if (bid.owner == address(0)) revert BidDoesNotExist();
+        if (winnerPlaintext == address(0)) revert InvalidWinner();
+
+        FHE.publishDecryptResult(lowestEncryptedBidder[rfqId], winnerPlaintext, signature);
+        if (!hasVendorBid[rfqId][winnerPlaintext]) revert InvalidWinner();
+
+        bytes32 bidId = vendorBidIds[rfqId][winnerPlaintext];
+        if (bidId == bytes32(0)) revert BidDoesNotExist();
+        Bid storage bid = bids[rfqId][bidId];
+        if (bid.owner != winnerPlaintext) revert InvalidWinner();
         if (bid.revealed) revert BidAlreadySelected();
-        
-        FHE.publishDecryptResult(bid.encryptedAmount, plaintext, signature);
-        require(plaintext == lowestPublishedBid[rfqId], "Bid does not match lowest published value");
-        
-        if (plaintext < rfq.minBid) revert BidBelowMinimum();
-        if (plaintext >= MAX_BID_AMOUNT) revert BidExceedsMaximum();
-        
+
         bid.revealed = true;
-        bid.revealedAmount = plaintext;
+        bid.revealedAmount = lowestPublishedBid[rfqId];
         
-        rfq.winnerAddress = bid.owner;
+        rfq.winnerAddress = winnerPlaintext;
         rfq.status = RFQStatus.WinnerSelected;
         rfq.lifecycleBlock = block.number;
         winnerBids[rfqId] = bidId;
-        lowestBidId[rfqId] = bidId;
-        
-        emit WinnerSelected(rfqId, bidId, bid.owner, plaintext);
+        emit WinnerSelected(rfqId, bidId, winnerPlaintext, lowestPublishedBid[rfqId]);
     }
 
     
@@ -768,7 +796,7 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
             );
             rfq.status = RFQStatus.Rejected;
         }
-        
+
         emit WinnerResponded(rfqId, msg.sender, accept);
     }
 
@@ -808,35 +836,31 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         if (rfq.finalPaymentReleased) revert FinalPaymentReleased();
         require(!rfq.paid, "Already paid via invoice");
         if (percentage == 0 || percentage > 100) revert InvalidPercentage();
+        if (pendingSettlementTransferId[rfqId] != bytes32(0)) revert PendingTransferVerification();
         
         uint64 releaseAmount = uint64((uint256(escrow.currentAmount) * uint256(percentage)) / 100);
         if (releaseAmount == 0) revert AmountTooSmall();
         
         uint64 fee = uint64((uint256(releaseAmount) * platformConfig.feeBps) / 10000);
         uint64 netAmount = releaseAmount - fee;
-        
-        escrow.currentAmount -= releaseAmount;
-        escrow.totalReleased += releaseAmount;
-        
+
         IFHERC20 token = _confidentialToken(rfq.escrowToken);
-        if (rfq.escrowToken == TokenType.Token1) {
-            platformConfig.treasuryToken1 += fee;
-        } else {
-            platformConfig.treasuryToken2 += fee;
-        }
-        _confidentialTransferExact(
+        bytes32 transferId = _confidentialTransferExact(
             token,
             rfq.winnerAddress,
             netAmount,
             keccak256(abi.encodePacked("rfq-release", rfqId, percentage, releaseAmount))
         );
-        
-        if (escrow.currentAmount == 0) {
-            rfq.status = RFQStatus.Completed;
-            rfq.finalPaymentReleased = true;
-        }
-        
-        emit PaymentReleased(rfqId, rfq.winnerAddress, releaseAmount, percentage);
+
+        pendingSettlementTransfers[transferId] = PendingSettlementTransfer({
+            action: PendingSettlementAction.ReleasePayment,
+            rfqId: rfqId,
+            recipient: rfq.winnerAddress,
+            amount: releaseAmount,
+            fee: fee,
+            percentage: percentage
+        });
+        pendingSettlementTransferId[rfqId] = transferId;
     }
 
     
@@ -960,18 +984,24 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         if (rfq.finalPaymentReleased) revert PaymentAlreadyReleased();
         if (rfq.paid) revert AlreadyPaid();
         if (escrow.currentAmount == 0) revert NoEscrowToReclaim();
+        if (pendingSettlementTransferId[rfqId] != bytes32(0)) revert PendingTransferVerification();
         
         uint64 amount = escrow.currentAmount;
-        escrow.currentAmount = 0;
-        rfq.finalPaymentReleased = true;
-        rfq.status = RFQStatus.Cancelled;
-        _confidentialTransferExact(
+        bytes32 transferId = _confidentialTransferExact(
             _confidentialToken(rfq.escrowToken),
             msg.sender,
             amount,
             keccak256(abi.encodePacked("rfq-reclaim-creator", rfqId))
         );
-        emit EscrowReclaimed(rfqId, msg.sender, amount);
+        pendingSettlementTransfers[transferId] = PendingSettlementTransfer({
+            action: PendingSettlementAction.CreatorReclaimEscrow,
+            rfqId: rfqId,
+            recipient: msg.sender,
+            amount: amount,
+            fee: 0,
+            percentage: 0
+        });
+        pendingSettlementTransferId[rfqId] = transferId;
     }
 
     
@@ -985,19 +1015,24 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
         if (rfq.paid) revert AlreadyPaid();
         if (rfq.finalPaymentReleased) revert PaymentAlreadyReleased();
         if (escrow.currentAmount == 0) revert NoEscrowToClaim();
+        if (pendingSettlementTransferId[rfqId] != bytes32(0)) revert PendingTransferVerification();
         
         uint64 amount = escrow.currentAmount;
-        escrow.currentAmount = 0;
-        escrow.totalReleased += amount;
-        rfq.finalPaymentReleased = true;
-        rfq.status = RFQStatus.Completed;
-        _confidentialTransferExact(
+        bytes32 transferId = _confidentialTransferExact(
             _confidentialToken(rfq.escrowToken),
             msg.sender,
             amount,
             keccak256(abi.encodePacked("rfq-reclaim-winner", rfqId))
         );
-        emit EscrowReclaimed(rfqId, msg.sender, amount);
+        pendingSettlementTransfers[transferId] = PendingSettlementTransfer({
+            action: PendingSettlementAction.WinnerClaimEscrow,
+            rfqId: rfqId,
+            recipient: msg.sender,
+            amount: amount,
+            fee: 0,
+            percentage: 0
+        });
+        pendingSettlementTransferId[rfqId] = transferId;
     }
 
     
@@ -1067,15 +1102,31 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
                 }
 
                 euint64 bidAmount = bid.encryptedAmount;
-                ebool isLower = FHE.lt(bidAmount, lowestEncryptedBid[pendingBid.rfqId]);
-                euint64 newLowest = FHE.select(isLower, bidAmount, lowestEncryptedBid[pendingBid.rfqId]);
+                euint64 candidateBidAmount = FHE.select(
+                    bidRangeChecks[pendingBid.rfqId][pendingBid.bidId],
+                    bidAmount,
+                    _encryptedMaxBidAmount
+                );
+                euint64 currentLowest = lowestEncryptedBid[pendingBid.rfqId];
+                eaddress currentLowestBidder = lowestEncryptedBidder[pendingBid.rfqId];
+                ebool isLower = FHE.lt(candidateBidAmount, currentLowest);
+                euint64 newLowest = FHE.select(
+                    isLower,
+                    candidateBidAmount,
+                    currentLowest
+                );
+                eaddress newBidderEncrypted = FHE.asEaddress(pendingBid.bidder);
+                eaddress newLowestBidder = FHE.select(isLower, newBidderEncrypted, currentLowestBidder);
                 lowestEncryptedBid[pendingBid.rfqId] = newLowest;
+                lowestEncryptedBidder[pendingBid.rfqId] = newLowestBidder;
                 FHE.allowThis(lowestEncryptedBid[pendingBid.rfqId]);
+                FHE.allowThis(lowestEncryptedBidder[pendingBid.rfqId]);
 
                 emit EncryptedBidTrackerUpdated(pendingBid.rfqId, euint64.unwrap(newLowest));
                 emit BidSubmitted(pendingBid.rfqId, pendingBid.bidId, pendingBid.bidder, pendingBid.stake);
             } else {
                 delete hasVendorBid[pendingBid.rfqId][pendingBid.bidder];
+                delete vendorBidIds[pendingBid.rfqId][pendingBid.bidder];
                 delete bids[pendingBid.rfqId][pendingBid.bidId];
             }
         }
@@ -1096,6 +1147,60 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
                 escrowRfq.status = RFQStatus.EscrowFunded;
                 escrowRfq.lifecycleBlock = block.number;
                 emit EscrowFunded(pendingEscrow.rfqId, pendingEscrow.amount, pendingEscrow.tokenType);
+            }
+        }
+
+        PendingSettlementTransfer memory pendingSettlement = pendingSettlementTransfers[transferId];
+        if (pendingSettlement.action != PendingSettlementAction.None) {
+            delete pendingSettlementTransfers[transferId];
+            delete pendingSettlementTransferId[pendingSettlement.rfqId];
+
+            if (success) {
+                RFQ storage settlementRfq = rfqs[pendingSettlement.rfqId];
+                if (pendingSettlement.action == PendingSettlementAction.ReleasePayment) {
+                    Escrow storage settlementEscrow = escrows[pendingSettlement.rfqId];
+                    settlementEscrow.currentAmount -= pendingSettlement.amount;
+                    settlementEscrow.totalReleased += pendingSettlement.amount;
+
+                    if (settlementRfq.escrowToken == TokenType.Token1) {
+                        platformConfig.treasuryToken1 += pendingSettlement.fee;
+                    } else {
+                        platformConfig.treasuryToken2 += pendingSettlement.fee;
+                    }
+
+                    if (settlementEscrow.currentAmount == 0) {
+                        settlementRfq.status = RFQStatus.Completed;
+                        settlementRfq.finalPaymentReleased = true;
+                    }
+
+                    emit PaymentReleased(
+                        pendingSettlement.rfqId,
+                        pendingSettlement.recipient,
+                        pendingSettlement.amount,
+                        pendingSettlement.percentage
+                    );
+                } else if (pendingSettlement.action == PendingSettlementAction.CreatorReclaimEscrow) {
+                    Escrow storage creatorEscrow = escrows[pendingSettlement.rfqId];
+                    creatorEscrow.currentAmount = 0;
+                    settlementRfq.finalPaymentReleased = true;
+                    settlementRfq.status = RFQStatus.Cancelled;
+                    emit EscrowReclaimed(
+                        pendingSettlement.rfqId,
+                        pendingSettlement.recipient,
+                        pendingSettlement.amount
+                    );
+                } else {
+                    Escrow storage winnerEscrow = escrows[pendingSettlement.rfqId];
+                    winnerEscrow.currentAmount = 0;
+                    winnerEscrow.totalReleased += pendingSettlement.amount;
+                    settlementRfq.finalPaymentReleased = true;
+                    settlementRfq.status = RFQStatus.Completed;
+                    emit EscrowReclaimed(
+                        pendingSettlement.rfqId,
+                        pendingSettlement.recipient,
+                        pendingSettlement.amount
+                    );
+                }
             }
         }
 
@@ -1135,7 +1240,7 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
             if (rfq.status != RFQStatus.Bidding || block.number >= rfq.biddingDeadline) {
                 return _rejectTransfer();
             }
-            if (bidId == bytes32(0) || bids[rfqId][bidId].owner != address(0) || hasVendorBid[rfqId][from]) {
+            if (bidId == bytes32(0) || pendingCallbackBidders[rfqId][bidId] != from) {
                 return _rejectTransfer();
             }
             if (expectedAmount != rfq.flatStake) {
@@ -1143,7 +1248,7 @@ contract SealRFQ is ReentrancyGuard, IFHERC20Receiver {
             }
             ebool stakeMatches = FHE.eq(amount, expected);
             FHE.allow(amount, from);
-            return _allowCallbackResult(stakeMatches);
+            return _allowCallbackResult(FHE.and(stakeMatches, bidRangeChecks[rfqId][bidId]));
         }
 
         if (rfq.creator != from) {

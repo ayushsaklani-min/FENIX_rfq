@@ -131,7 +131,7 @@ export default function VendorMyBidsPage() {
         () => bids.filter((bid) => bid.rfq.winnerAddress?.toLowerCase() === bid.owner.toLowerCase()).length,
         [bids],
     );
-    const proofCount = useMemo(
+    const readyForBuyerFinalizationCount = useMemo(
         () => bids.filter((bid) => currentBlock !== null && currentBlock >= bid.rfq.biddingDeadline && bid.rfq.statusCode < 3).length,
         [bids, currentBlock],
     );
@@ -151,14 +151,14 @@ export default function VendorMyBidsPage() {
             <PageHeader
                 eyebrow="Vendor"
                 title="My bids"
-                description="Manage your indexed encrypted RFQ bids, share winner proof packages, and respond if one of your bids is selected."
+                description="Manage your indexed encrypted RFQ bids and respond if one of your bids is selected."
             />
 
             {error ? <Notice tone="danger">{error}</Notice> : null}
 
             <DataGrid columns={3}>
                 <DataPoint label="Indexed bids" value={bids.length} />
-                <DataPoint label="Need proof share" value={proofCount} />
+                <DataPoint label="Ready for buyer finalization" value={readyForBuyerFinalizationCount} />
                 <DataPoint label="Won" value={wonCount} />
             </DataGrid>
 
@@ -177,7 +177,6 @@ export default function VendorMyBidsPage() {
                                 {bids.map((bid) => {
                                     const isWinner = bid.rfq.winnerAddress?.toLowerCase() === bid.owner.toLowerCase();
                                     const canRespond = isWinner && bid.rfq.statusCode === 3 && !bid.rfq.winnerAccepted;
-                                    const canShareProof = currentBlock !== null && currentBlock >= bid.rfq.biddingDeadline && bid.rfq.statusCode < 3;
 
                                     return (
                                         <div key={bid.bidId} className="rounded-xl border border-white/12 bg-white/[0.05] p-4 transition hover:border-white/20 hover:bg-white/[0.07]">
@@ -208,7 +207,7 @@ export default function VendorMyBidsPage() {
                                             <ActionBar className="mt-3">
                                                 <Link href={`/vendor/reveal/${encodeURIComponent(bid.bidId)}?rfqId=${encodeURIComponent(bid.rfqId)}`}>
                                                     <Button size="sm" variant="secondary">
-                                                        {canShareProof ? 'Share winner proof' : 'Open proof page'}
+                                                        View bid reference
                                                     </Button>
                                                 </Link>
 

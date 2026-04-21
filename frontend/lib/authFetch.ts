@@ -3,12 +3,13 @@
 /**
  * Authenticated fetch utility.
  *
- * Access token is stored in module-level memory and injected as a
- * Bearer token on every request. On 401, attempts a silent refresh
- * then retries once. Falls back gracefully if no token is set.
+ * Browser requests are expected to use same-origin httpOnly cookies.
+ * A module-level Bearer token path remains available for non-browser
+ * or transitional callers. On 401, attempts a silent refresh and then
+ * retries once.
  */
 
-import { safeGetItem, safeRemoveItem, safeSetItem } from './safeLocalStorage';
+import { safeRemoveItem } from './safeLocalStorage';
 
 export const AUTH_STATE_CLEARED_EVENT = 'sealrfq:auth-state-cleared';
 export const ROLE_SWITCH_REQUIRED_EVENT = 'sealrfq:role-switch-required';
@@ -18,6 +19,7 @@ export const ROLE_SWITCH_REQUIRED_EVENT = 'sealrfq:role-switch-required';
 // ---------------------------------------------------------------------------
 
 let _accessToken: string | null = null;
+let _legacyStoragePurged = false;
 
 export class ApiError extends Error {
     code?: string;
@@ -32,24 +34,18 @@ export class ApiError extends Error {
 }
 
 export function setAccessToken(token: string | null): void {
+    purgeLegacyAccessTokenStorage();
     _accessToken = token;
-    if (token) {
-        safeSetItem('accessToken', token);
-    } else {
-        safeRemoveItem('accessToken');
-    }
 }
 
 export function getAccessToken(): string | null {
-    if (!_accessToken) {
-        _accessToken = safeGetItem('accessToken');
-    }
+    purgeLegacyAccessTokenStorage();
     return _accessToken;
 }
 
 export function clearAccessToken(): void {
+    purgeLegacyAccessTokenStorage();
     _accessToken = null;
-    safeRemoveItem('accessToken');
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +80,15 @@ function clearLocalUiState(): void {
     }
 }
 
+function purgeLegacyAccessTokenStorage(): void {
+    if (_legacyStoragePurged) {
+        return;
+    }
+
+    safeRemoveItem('accessToken');
+    _legacyStoragePurged = true;
+}
+
 async function tryRefreshAccessToken(): Promise<boolean> {
     const response = await fetch('/api/auth/refresh', {
         method: 'POST',
@@ -106,7 +111,11 @@ export async function authenticatedFetch(
     input: RequestInfo | URL,
     init?: RequestInit
 ): Promise<Response> {
-    let response = await fetch(input, { ...init, headers: buildHeaders(init) });
+    let response = await fetch(input, {
+        ...init,
+        headers: buildHeaders(init),
+        credentials: init?.credentials ?? 'same-origin',
+    });
 
     if (response.status === 403 && typeof window !== 'undefined') {
         try {
@@ -137,7 +146,11 @@ export async function authenticatedFetch(
     }
 
     // Retry with new token.
-    response = await fetch(input, { ...init, headers: buildHeaders(init) });
+    response = await fetch(input, {
+        ...init,
+        headers: buildHeaders(init),
+        credentials: init?.credentials ?? 'same-origin',
+    });
     if (response.status === 401) {
         clearLocalUiState();
     }

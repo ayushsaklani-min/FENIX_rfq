@@ -179,6 +179,40 @@ describe("SealVickrey", function () {
     await hre.cofhe.mocks.expectPlaintext(await token.confidentialBalanceOf(creator.address), 35_000n);
   });
 
+  it("does not let an out-of-range encrypted bid replace the tracked lowest bid", async function () {
+    const { auctionId } = await createAuctionFixture(2);
+    const validBidId = hre.ethers.id("valid-vickrey-bid");
+    const invalidBidId = hre.ethers.id("invalid-max-vickrey-bid");
+
+    await Promise.all([
+      setOperatorFor(vendor1, await sealVickrey.getAddress()),
+      setOperatorFor(vendor2, await sealVickrey.getAddress())
+    ]);
+
+    const validBid = await encryptUint64(vendor1Client, 125);
+    const invalidBid = await encryptUint64(vendor2Client, (2n ** 64n) - 1n);
+
+    const validReceipt = await (
+      await sealVickrey.connect(vendor1).commitBid(auctionId, validBidId, validBid)
+    ).wait();
+    await confirmTransferFromReceipt(sealVickrey, validReceipt, vendor1Client);
+
+    const invalidReceipt = await (
+      await sealVickrey.connect(vendor2).commitBid(auctionId, invalidBidId, invalidBid)
+    ).wait();
+    await confirmTransferFromReceipt(sealVickrey, invalidReceipt, vendor2Client);
+
+    const auction = await sealVickrey.getAuction(auctionId);
+    await hre.cofhe.mocks.expectPlaintext(await sealVickrey.encryptedLowestBid(auctionId), 125n);
+    await hre.cofhe.mocks.expectPlaintext(
+      await sealVickrey.encryptedSecondLowestBid(auctionId),
+      18446744073709551614n
+    );
+    expect(auction.bidCount).to.equal(1n);
+    await mineBlocks(Number(auction.biddingDeadline) - (await latestBlock()) + 1);
+    await expect(sealVickrey.closeBidding(auctionId)).to.be.revertedWith("Not enough bids");
+  });
+
   it("rejects callback calls with wrong token, wrong operator, and malformed data", async function () {
     const { auctionId } = await createAuctionFixture(1);
     const bidId = hre.ethers.id("callback-bid");

@@ -6,7 +6,6 @@ import { useEffect, useState } from 'react';
 import { ArrowLeftRight, BriefcaseBusiness, ShoppingBag } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { useWallet } from '@/contexts/WalletContext';
-import { safeGetItem } from '@/lib/safeLocalStorage';
 
 function roleLabel(role: string | null) {
     if (role === 'BUYER') return 'Buyer';
@@ -44,10 +43,8 @@ export default function UnauthorizedPage() {
         }
 
         setTargetRole(nextRole);
-        await switchRole(nextRole);
-
-        const storedRole = typeof window !== 'undefined' ? safeGetItem('role') : null;
-        if (storedRole === nextRole) {
+        const switched = await switchRole(nextRole);
+        if (switched) {
             router.replace(destination);
         }
         setTargetRole(null);

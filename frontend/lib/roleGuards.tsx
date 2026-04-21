@@ -9,7 +9,6 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { authenticatedFetch } from './authFetch';
-import { safeGetItem } from './safeLocalStorage';
 
 export type UserRole = 'BUYER' | 'VENDOR' | 'AUDITOR' | 'NEW_USER' | null;
 
@@ -28,13 +27,6 @@ export function useRoleGuard(allowedRoles: UserRole[]) {
     useEffect(() => {
         const checkAuth = async () => {
             try {
-                const accessToken = safeGetItem('accessToken');
-
-                if (!accessToken) {
-                    router.push('/login');
-                    return;
-                }
-
                 // Fetch user role from backend
                 const response = await authenticatedFetch('/api/auth/me');
 

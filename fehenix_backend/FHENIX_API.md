@@ -6,8 +6,28 @@ This document describes the complete API surface for the Fhenix/EVM backend that
 All endpoints are prefixed with `/api/fhenix/`
 
 ## Authentication
-All endpoints require JWT authentication via `Authorization: Bearer <token>` header.
+Authenticated endpoints accept either:
+
+- a same-origin httpOnly `accessToken` cookie for browser clients
+- an `Authorization: Bearer <token>` header for server-to-server or non-browser callers
+
+Browser clients should use the `/api/auth/*` routes with `credentials: 'same-origin'` and should not persist the access token in `localStorage`.
 Supported roles: `BUYER`, `VENDOR`, `AUDITOR`, `NEW_USER`
+
+### Browser Auth Routes
+
+- `POST /api/auth/challenge`
+  Request body: `{ "walletAddress": "0x..." }`
+- `POST /api/auth/connect`
+  Request body: `{ "walletAddress": "0x...", "nonce": "...", "signature": "0x..." }`
+- `POST /api/auth/refresh`
+  Browser flow: send an empty body and rely on the httpOnly `refreshToken` cookie
+- `GET /api/auth/me`
+  Returns the current authenticated wallet, role, and session id
+- `POST /api/auth/switch-role`
+  Request body: `{ "role": "BUYER" | "VENDOR" }`
+- `POST /api/auth/dev/switch-role`
+  Disabled by default. Only available when `NODE_ENV=development` and `ALLOW_DEV_AUTH_ROUTES=true`
 
 ## Response Format
 All responses follow this structure:
@@ -40,7 +60,7 @@ The client should sign and broadcast this transaction using their wallet.
 ## Required Dependencies
 
 ```bash
-npm install @cofhe/sdk ethers@^6 viem wagmi
+npm install @cofhe/sdk@0.4.0 ethers@^6 viem wagmi
 ```
 
 ## CoFHE Client Setup
@@ -63,17 +83,19 @@ export { Encryptable, FheTypes };
 
 ```typescript
 import { cofheClient } from './lib/cofhe';
+import { chains } from '@cofhe/sdk/chains';
 import { usePublicClient, useWalletClient } from 'wagmi';
 
 // In your React component
 const publicClient = usePublicClient();
 const { data: walletClient } = useWalletClient();
+const walletAddress = walletClient?.account?.address;
 
 // Connect once when wallet connects
 await cofheClient.connect(publicClient, walletClient);
 
 // Create permit for decryption (one-time per account)
-await cofheClient.permits.getOrCreateSelfPermit();
+await cofheClient.permits.getOrCreateSelfPermit(chains.sepolia.id, walletAddress);
 ```
 
 ## Encrypting Bid Amounts
@@ -117,8 +139,8 @@ async function submitBid(rfqId: string, bidAmount: bigint, stake: bigint) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
     },
+    credentials: 'same-origin',
     body: JSON.stringify({
       stake: stake.toString(),
       encryptedBid,
@@ -150,7 +172,8 @@ import { cofheClient } from './lib/cofhe';
 async function decryptAndSelectWinner(rfqId: string, winnerBidId: string, ctHash: bigint) {
   // 1. Decrypt the bid value using CoFHE SDK (for on-chain verification)
   const decryptResult = await cofheClient
-    .decryptForTx(ctHash, FheTypes.Uint64)
+    .decryptForTx(ctHash)
+    .withPermit()
     .execute();
 
   // 2. Call backend API with decrypted proof
@@ -158,8 +181,8 @@ async function decryptAndSelectWinner(rfqId: string, winnerBidId: string, ctHash
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${accessToken}`,
     },
+    credentials: 'same-origin',
     body: JSON.stringify({
       bidId: winnerBidId,
       plaintext: decryptResult.decryptedValue.toString(),
@@ -184,15 +207,17 @@ async function decryptAndSelectWinner(rfqId: string, winnerBidId: string, ctHash
 
 ```typescript
 import { FheTypes } from '@cofhe/sdk';
+import { chains } from '@cofhe/sdk/chains';
 import { cofheClient } from './lib/cofhe';
 
-async function viewMyBidAmount(ctHash: bigint): Promise<bigint> {
+async function viewMyBidAmount(ctHash: bigint, walletAddress: string): Promise<bigint> {
   // Ensure permit exists
-  await cofheClient.permits.getOrCreateSelfPermit();
+  await cofheClient.permits.getOrCreateSelfPermit(chains.sepolia.id, walletAddress);
 
   // Decrypt for local viewing (not on-chain)
   const plaintext = await cofheClient
     .decryptForView(ctHash, FheTypes.Uint64)
+    .withPermit()
     .execute();
 
   return plaintext; // bigint
@@ -209,7 +234,7 @@ async function viewMyBidAmount(ctHash: bigint): Promise<bigint> {
 interface EncryptedBidInput {
   ctHash: string;        // bigint as decimal string (e.g., "12345...")
   securityZone: number;  // typically 0
-  utype: number;         // 4 = uint64 (FheTypes.Uint64)
+  utype: number;         // 5 = uint64 (FheTypes.Uint64)
   signature: string;     // hex string "0x..."
 }
 
@@ -247,8 +272,13 @@ interface RfqData {
   status: string;
   bidCount: string;
   winnerAddress: string;
+  winnerBidId: string;
   winnerAccepted: boolean;
   paid: boolean;
+  lowestEncryptedBidCtHash: string;
+  lowestEncryptedBidderCtHash: string;
+  lowestPublishedBid: string;
+  lowestBidPublished: boolean;
   escrow: {
     originalAmount: string;
     currentAmount: string;
@@ -294,23 +324,33 @@ Submit an encrypted bid.
   "encryptedBid": {
     "ctHash": "123...",      // uint256 as decimal string
     "securityZone": 0,       // uint8
-    "utype": 4,              // uint8 (4 = euint64)
+    "utype": 5,              // uint8 (5 = euint64)
     "signature": "0x..."     // FHE signature bytes
   }
 }
 ```
 
 ### POST `/api/fhenix/rfq/[id]/close`
-Close bidding phase.
+Close bidding phase and move the RFQ into the buyer proof window.
 
-### POST `/api/fhenix/rfq/[id]/select-winner`
-Select winning bid.
+### POST `/api/fhenix/rfq/[id]/publish-lowest`
+Publish the decrypted lowest bid amount from the RFQ-wide encrypted lowest-bid tracker.
 
 **Request Body:**
 ```json
 {
-  "bidId": "0x...",          // bytes32
-  "plaintext": "5000",       // uint64 as string (decrypted bid)
+  "plaintext": "5000",       // uint64 as string
+  "signature": "0x..."       // threshold signature
+}
+```
+
+### POST `/api/fhenix/rfq/[id]/select-winner`
+Finalize the winning bidder from the encrypted lowest-bidder tracker.
+
+**Request Body:**
+```json
+{
+  "winnerAddress": "0x...",  // decrypted lowest bidder address
   "signature": "0x..."       // threshold signature
 }
 ```
@@ -390,7 +430,7 @@ Submit encrypted bid (commit phase).
   "encryptedBid": {
     "ctHash": "123...",
     "securityZone": 0,
-    "utype": 4,
+    "utype": 5,
     "signature": "0x..."
   }
 }
@@ -596,9 +636,10 @@ Get payment receipt for invoice.
 Required for Fhenix backend:
 ```env
 FHENIX_BACKEND_ENABLED=true
-FHENIX_RPC_URL=https://sepolia.infura.io/v3/YOUR_KEY
+FHENIX_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 FHENIX_CHAIN_ID=11155111
 FHENIX_PRIVATE_KEY=0x...
+ALLOW_DEV_AUTH_ROUTES=false
 FHENIX_SEAL_RFQ_ADDRESS=0x...
 FHENIX_SEAL_VICKREY_ADDRESS=0x...
 FHENIX_SEAL_DUTCH_ADDRESS=0x...

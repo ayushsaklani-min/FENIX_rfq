@@ -39,7 +39,7 @@ npx hardhat test
 ## Deployment
 
 ```bash
-npx hardhat run scripts/deploy.js --network sepolia
+npx hardhat run scripts/deploy.ts --network eth-sepolia
 ```
 
 Set `STAKE_TOKEN_ADDRESS` or `TOKEN1_ADDRESS` before deployment so `SealVickrey` and `SealDutch` can escrow FHERC20 stakes.

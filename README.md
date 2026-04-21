@@ -18,7 +18,7 @@ SEALrfq (Sealed Encrypted Auction Ledger for Request for Quotation) is a privacy
 
 **The Problem**: Global procurement corruption costs $2+ trillion annually. Traditional systems expose bid prices, enabling collusion and bid manipulation.
 
-**Our Solution**: Cryptographically sealed bids that remain encrypted throughout the entire auction process, with winner determination happening on encrypted data.
+**Our Solution**: Cryptographically sealed bids that stay encrypted during bidding and encrypted comparison, with only the values required for reveal, proof, or settlement exposed at the end of the flow.
 
 ## Architecture
 
@@ -43,7 +43,7 @@ SEALrfq (Sealed Encrypted Auction Ledger for Request for Quotation) is a privacy
 - **📋 RFQ Management**: Complete request-for-quotation workflow
 - **💰 Escrow System**: Automated payment release on delivery confirmation
 - **📊 Audit Trail**: Immutable, privacy-preserving audit logs
-- **🔐 Zero-Knowledge Proofs**: Verify computations without revealing data
+- **🔐 Threshold Decrypt Proofs**: Verify decrypt outputs needed for settlement and winner selection
 
 ## Project Structure
 
@@ -102,7 +102,7 @@ See [fehenix-contract/README.md](./fehenix-contract/README.md) for deployment in
 | Layer | Technology |
 |-------|------------|
 | Frontend | Next.js 14, React 18, TailwindCSS, wagmi, RainbowKit |
-| Backend | Node.js, Express, TypeScript |
+| Backend | Next.js API routes, TypeScript |
 | Blockchain | Ethereum (Sepolia), Solidity |
 | Encryption | Fully Homomorphic Encryption (FHE) via Fhenix |
 | Wallet | MetaMask, WalletConnect |

@@ -8,7 +8,7 @@
         "lighthouse": "lighthouse http://localhost:3000 --view --output=html --output-path=./lighthouse-report.html"
     },
     "dependencies": {
-        "@cofhe/sdk": "^0.2.0",
+        "@cofhe/sdk": "0.4.0",
         "@rainbow-me/rainbowkit": "^2.1.0",
         "@react-three/drei": "^9.121.4",
         "@react-three/fiber": "^8.17.14",

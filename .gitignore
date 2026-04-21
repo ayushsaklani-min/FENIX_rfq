@@ -59,6 +59,16 @@ __pycache__/
 venv/
 .venv/
 
+# Databases (dev SQLite)
+*.db
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Session / AI tooling
+sessionid.txt
+.gemini/
+
 # Misc
 *.bak
 *.backup

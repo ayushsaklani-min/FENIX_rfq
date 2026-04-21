@@ -27,7 +27,8 @@ import { fetchCurrentBlockHeight, getPublicClient } from '@/lib/sepoliaClient';
 import { encryptBidAmount } from '@/lib/cofheClient';
 import { confirmTransferVerificationFromReceipt } from '@/lib/fhenixWorkflow';
 import { CONTRACT_ADDRESSES, formatAmount, PRICING_MODE, pricingLabel } from '@/lib/sealProtocol';
-import { safeGetItem, safeSetItem } from '@/lib/safeLocalStorage';
+import { safeGetItem, safeRemoveItem } from '@/lib/safeLocalStorage';
+import { safeGetSessionItem, safeSetSessionItem } from '@/lib/safeSessionStorage';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
 
@@ -203,12 +204,13 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                 bidId: result.data.bidId,
                 rfqId: rfq.id,
                 encryptedAmountCtHash: encryptedBid.ctHash,
-                bidAmount: amountMicro,
                 savedAt: new Date().toISOString(),
             };
 
-            safeSetItem(`fhenix_bid_${result.data.bidId}`, JSON.stringify(bundle));
-            safeSetItem(`fhenix_rfq_bid_${rfq.id}`, JSON.stringify(bundle));
+            safeSetSessionItem(`fhenix_bid_${result.data.bidId}`, JSON.stringify(bundle));
+            safeSetSessionItem(`fhenix_rfq_bid_${rfq.id}`, JSON.stringify(bundle));
+            safeRemoveItem(`fhenix_bid_${result.data.bidId}`);
+            safeRemoveItem(`fhenix_rfq_bid_${rfq.id}`);
 
             setExistingBid({
                 bidId: result.data.bidId,
@@ -245,8 +247,8 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
         );
     }
 
-    const savedBundleRaw = safeGetItem(`fhenix_rfq_bid_${rfq.id}`);
-    let savedBundle: { bidId: string; bidAmount: string } | null = null;
+    const savedBundleRaw = safeGetSessionItem(`fhenix_rfq_bid_${rfq.id}`) ?? safeGetItem(`fhenix_rfq_bid_${rfq.id}`);
+    let savedBundle: { bidId: string } | null = null;
     if (savedBundleRaw) {
         try {
             savedBundle = JSON.parse(savedBundleRaw);
@@ -260,7 +262,7 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
             <PageHeader
                 eyebrow="Vendor"
                 title="Submit encrypted bid"
-                description="Seal your price with CoFHE, sign the Sepolia transaction, and keep the bid package so you can share a winner proof later if your bid wins."
+                description="Seal your price with CoFHE, sign the Sepolia transaction, and keep the bid reference so you can track the award flow later if your bid wins."
                 actions={
                     <ActionBar>
                         <StatusChip status={rfq.status} />
@@ -322,7 +324,7 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                             <DeadlineCountdown deadlineBlock={rfq.revealDeadline} label="Buyer proof window" passedLabel="Reveal window closed" />
                         </div>
                         <div className="mt-4 text-sm text-white/55">
-                            Buyer-side proof publication starts after bidding closes. Vendors do not reveal bid amounts directly on-chain in the direct RFQ flow.
+                            Buyer-side proof publication starts after bidding closes. Direct RFQ winner selection no longer requires a vendor-shared proof package.
                         </div>
                     </Panel>
 
@@ -344,7 +346,7 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                             </InfoList>
                             <ActionBar className="mt-4">
                                 <Link href={`/vendor/reveal/${encodeURIComponent(existingBid.bidId)}?rfqId=${encodeURIComponent(rfq.id)}`}>
-                                    <Button size="sm">Open winner proof page</Button>
+                                    <Button size="sm">Open bid reference</Button>
                                 </Link>
                             </ActionBar>
                         </Panel>
@@ -354,10 +356,9 @@ export default function VendorBidPage({ params }: { params: { rfqId: string } })
                         <Panel title="Browser backup">
                             <InfoList>
                                 <InfoRow label="Bid id" value={<CopyableText value={savedBundle.bidId} displayValue={truncateMiddle(savedBundle.bidId, 14, 8)} />} />
-                                <InfoRow label="Bid amount" value={formatAmount(savedBundle.bidAmount, rfq.tokenType, 0)} />
                             </InfoList>
                             <div className="mt-3 text-sm text-white/55">
-                                This optional browser backup only helps reopen the proof page directly. The shared workspace reads the indexed bid from Sepolia first.
+                                This optional browser backup only lasts for the current browser session and intentionally avoids storing the bid amount in plaintext.
                             </div>
                         </Panel>
                     ) : null}

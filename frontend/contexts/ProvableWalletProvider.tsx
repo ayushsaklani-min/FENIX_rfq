@@ -1,8 +1,7 @@
 'use client';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { WagmiProvider, createConfig, http } from 'wagmi';
-import { injected } from 'wagmi/connectors';
+import { WagmiProvider, createConfig, http, injected } from 'wagmi';
 import { defineChain, fallback } from 'viem';
 
 const appRpcUrls = Array.from(

@@ -11,7 +11,7 @@ const SEAL_RFQ_ABI = [
     `function permitAndSubmitBid(bytes32 rfqId, bytes32 bidId, ${ENCRYPTED_UINT64_TUPLE} encryptedBid, uint256 deadline, uint8 v, bytes32 r, bytes32 s)`,
     'function closeBidding(bytes32 rfqId)',
     'function publishLowestBid(bytes32 rfqId, uint64 plaintext, bytes signature)',
-    'function selectWinner(bytes32 rfqId, bytes32 bidId, uint64 plaintext, bytes signature)',
+    'function selectWinner(bytes32 rfqId, address winnerPlaintext, bytes signature)',
     'function winnerRespond(bytes32 rfqId, bool accept)',
     'function winnerRespondImported(bytes32 rfqId, bool accept)',
     'function fundEscrowToken(bytes32 rfqId, uint8 tokenType, uint64 amount)',
@@ -33,12 +33,12 @@ const SEAL_RFQ_ABI = [
     'function getPendingTransferCheck(bytes32 transferId) view returns (bytes32)',
     'function bids(bytes32 rfqId, bytes32 bidId) view returns (address owner, bytes32 encryptedAmount, uint64 stake, bool revealed, uint64 revealedAmount)',
     'function lowestEncryptedBid(bytes32 rfqId) view returns (bytes32)',
-    'function lowestBidId(bytes32 rfqId) view returns (bytes32)',
+    'function lowestEncryptedBidder(bytes32 rfqId) view returns (bytes32)',
     'function winnerBids(bytes32 rfqId) view returns (bytes32)',
     'function auctionSource(bytes32 rfqId) view returns (bytes32)',
     'function invoiceReceipts(bytes32 rfqId) view returns (bytes32)',
     'function importedWinnerPrice(bytes32 rfqId) view returns (uint64)',
-    'function hasVendorBid(bytes32 rfqId, address vendor) view returns (bool)',
+    'function hasBid(bytes32 rfqId, address vendor) view returns (bool)',
     'function platformConfig() view returns (address admin,uint256 feeBps,bool paused,uint256 treasuryToken1,uint256 treasuryToken2)',
     'function token1() view returns (address)',
     'function token2() view returns (address)',
@@ -115,7 +115,7 @@ const SEAL_INVOICE_ABI = [
 ] as const;
 
 export type FhenixClients = {
-    provider: JsonRpcProvider;
+    provider: JsonRpcProvider | FallbackProvider;
     sealRfq: Contract;
     sealVickrey: Contract;
     sealDutch: Contract;
@@ -190,7 +190,7 @@ export function getFhenixClients(): FhenixClients {
                   })),
               );
 
-    cached = {
+    const clients: FhenixClients = {
         provider,
         sealRfq: new Contract(sealRfqAddress, SEAL_RFQ_ABI, provider),
         sealVickrey: new Contract(sealVickreyAddress, SEAL_VICKREY_ABI, provider),
@@ -199,5 +199,6 @@ export function getFhenixClients(): FhenixClients {
         chainId,
     };
 
-    return cached;
+    cached = clients;
+    return clients;
 }

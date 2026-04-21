@@ -143,7 +143,7 @@ export function TxStatusView({
                     <div className="flex items-center gap-2">
                         {tx.txHash.startsWith('0x') ? (
                             <a
-                                href={`${process.env.NEXT_PUBLIC_FHENIX_EXPLORER_URL || 'https://explorer.fhenix.zone'}/tx/${tx.txHash}`}
+                                href={`${process.env.NEXT_PUBLIC_FHENIX_EXPLORER_URL || 'https://sepolia.etherscan.io'}/tx/${tx.txHash}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="min-w-0 truncate font-mono text-xs text-blue-300 hover:underline"

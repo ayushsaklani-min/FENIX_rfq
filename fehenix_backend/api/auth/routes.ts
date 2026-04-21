@@ -6,6 +6,7 @@
  * POST /api/auth/refresh - Refresh access token
  * POST /api/auth/logout - Revoke session
  * POST /api/auth/logout-all - Revoke all sessions
+ * POST /api/auth/switch-role - Switch between BUYER and VENDOR sessions
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -17,6 +18,8 @@ import { requireAuth } from '../../auth/middleware';
 const prisma = new PrismaClient();
 const authService = new AuthService(prisma);
 const isProductionEnv = process.env.NODE_ENV?.toString() === 'production';
+const isLocalDevelopment = process.env.NODE_ENV?.toString() === 'development';
+const allowDevAuthRoutes = isLocalDevelopment && process.env.ALLOW_DEV_AUTH_ROUTES === 'true';
 
 // ============================================================================
 // Request/Response Schemas
@@ -32,10 +35,6 @@ const ConnectRequestSchema = z.object({
     walletAddress: evmAddress,
     nonce: z.string(),
     signature: z.string(),
-});
-
-const RefreshRequestSchema = z.object({
-    refreshToken: z.string(),
 });
 
 const LogoutRequestSchema = z.object({
@@ -108,7 +107,6 @@ export async function handleConnect(request: NextRequest): Promise<NextResponse>
         const response = NextResponse.json({
             status: 'success',
             data: {
-                accessToken: session.accessToken,
                 role: session.role,
                 walletAddress: session.walletAddress,
                 expiresAt: session.accessTokenExpiresAt.toISOString(),
@@ -152,14 +150,7 @@ export async function handleConnect(request: NextRequest): Promise<NextResponse>
 export async function handleRefresh(request: NextRequest): Promise<NextResponse> {
     try {
         // Try to get refresh token from cookie first
-        let refreshToken = request.cookies.get('refreshToken')?.value;
-
-        // Fallback to body
-        if (!refreshToken) {
-            const body = await request.json();
-            const { refreshToken: tokenFromBody } = RefreshRequestSchema.parse(body);
-            refreshToken = tokenFromBody;
-        }
+        const refreshToken = request.cookies.get('refreshToken')?.value;
 
         if (!refreshToken) {
             throw new Error('Refresh token not found');
@@ -171,7 +162,6 @@ export async function handleRefresh(request: NextRequest): Promise<NextResponse>
         const response = NextResponse.json({
             status: 'success',
             data: {
-                accessToken: session.accessToken,
                 role: session.role,
                 walletAddress: session.walletAddress,
                 expiresAt: session.accessTokenExpiresAt.toISOString(),
@@ -291,10 +281,10 @@ export async function handleMe(request: NextRequest): Promise<NextResponse> {
 }
 
 // ============================================================================
-// POST /api/auth/dev/switch-role
+// POST /api/auth/switch-role
 // ============================================================================
 
-export async function handleDevSwitchRole(request: NextRequest): Promise<NextResponse> {
+export async function handleSwitchRole(request: NextRequest): Promise<NextResponse> {
     try {
         const authResult = await requireAuth(request);
         if (authResult instanceof NextResponse) {
@@ -313,7 +303,6 @@ export async function handleDevSwitchRole(request: NextRequest): Promise<NextRes
         const response = NextResponse.json({
             status: 'success',
             data: {
-                accessToken: session.accessToken,
                 role: session.role,
                 walletAddress: session.walletAddress,
                 expiresAt: session.accessTokenExpiresAt.toISOString(),
@@ -343,4 +332,25 @@ export async function handleDevSwitchRole(request: NextRequest): Promise<NextRes
             { status: 500 }
         );
     }
+}
+
+// ============================================================================
+// POST /api/auth/dev/switch-role
+// ============================================================================
+
+export async function handleDevSwitchRole(request: NextRequest): Promise<NextResponse> {
+    if (!allowDevAuthRoutes) {
+        return NextResponse.json(
+            {
+                status: 'error',
+                error: {
+                    code: 'ROUTE_DISABLED',
+                    message: 'The development role-switch route is disabled unless ALLOW_DEV_AUTH_ROUTES=true in local development.',
+                },
+            },
+            { status: 404 }
+        );
+    }
+
+    return handleSwitchRole(request);
 }

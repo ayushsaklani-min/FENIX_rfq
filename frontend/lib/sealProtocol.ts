@@ -3,22 +3,23 @@ import { keccak256, toHex, encodePacked } from 'viem';
 
 // Contract addresses from environment
 export const CONTRACT_ADDRESSES = {
-    stakeToken: process.env.NEXT_PUBLIC_FHENIX_STAKE_TOKEN_ADDRESS || process.env.NEXT_PUBLIC_FHENIX_TOKEN1_ADDRESS || '0x0000000000000000000000000000000000000005',
-    rfq: process.env.NEXT_PUBLIC_FHENIX_RFQ_ADDRESS || '0x0000000000000000000000000000000000000001',
-    vickrey: process.env.NEXT_PUBLIC_FHENIX_VICKREY_ADDRESS || '0x0000000000000000000000000000000000000002',
-    dutch: process.env.NEXT_PUBLIC_FHENIX_DUTCH_ADDRESS || '0x0000000000000000000000000000000000000003',
-    invoice: process.env.NEXT_PUBLIC_FHENIX_INVOICE_ADDRESS || '0x0000000000000000000000000000000000000004',
+    stakeToken: (process.env.NEXT_PUBLIC_FHENIX_STAKE_TOKEN_ADDRESS || process.env.NEXT_PUBLIC_FHENIX_TOKEN1_ADDRESS || '0x0000000000000000000000000000000000000005') as `0x${string}`,
+    rfq: (process.env.NEXT_PUBLIC_FHENIX_RFQ_ADDRESS || '0x0000000000000000000000000000000000000001') as `0x${string}`,
+    vickrey: (process.env.NEXT_PUBLIC_FHENIX_VICKREY_ADDRESS || '0x0000000000000000000000000000000000000002') as `0x${string}`,
+    dutch: (process.env.NEXT_PUBLIC_FHENIX_DUTCH_ADDRESS || '0x0000000000000000000000000000000000000003') as `0x${string}`,
+    invoice: (process.env.NEXT_PUBLIC_FHENIX_INVOICE_ADDRESS || '0x0000000000000000000000000000000000000004') as `0x${string}`,
 } as const;
 
-// FHE Types enum matching @cofhe/sdk
+// FHE Types aligned with @cofhe/sdk@0.4.0
 export const FHE_TYPES = {
     BOOL: 0,
-    UINT8: 1,
-    UINT16: 2,
-    UINT32: 3,
-    UINT64: 4,
-    UINT128: 5,
-    UINT160: 6, // address
+    UINT4: 1,
+    UINT8: 2,
+    UINT16: 3,
+    UINT32: 4,
+    UINT64: 5,
+    UINT128: 6,
+    UINT160: 7, // address
 } as const;
 
 export const TOKEN_TYPE = {
@@ -167,7 +168,7 @@ export const dutchAuctionSchema = z.object({
 export type EncryptedBidInput = {
     ctHash: string;        // bigint as decimal string
     securityZone: number;  // typically 0
-    utype: number;         // FHE_TYPES.UINT64 = 4
+    utype: number;         // FHE_TYPES.UINT64 = 5
     signature: string;     // hex string "0x..."
 };
 

@@ -74,7 +74,7 @@ export function HowItWorksCarousel() {
                             {howItWorksConfig.slides.map((slide, index) => (
                                 <div
                                     key={slide.title}
-                                    className={`absolute inset-0 transition-all duration-[600ms] ease-out ${
+                                    className={`absolute inset-0 transition-all ease-out ${
                                         index === currentSlide
                                             ? 'z-10 scale-100 opacity-100'
                                             : index === (currentSlide - 1 + howItWorksConfig.slides.length) % howItWorksConfig.slides.length && direction === 'next'
@@ -83,6 +83,7 @@ export function HowItWorksCarousel() {
                                                 ? 'translate-x-full opacity-0'
                                                 : 'opacity-0'
                                     }`}
+                                    style={{ transitionDuration: '600ms' }}
                                 >
                                     <img src={slide.image} alt={slide.title} loading="lazy" className={`h-full w-full object-cover ${index === currentSlide ? 'kenburns' : ''}`} />
                                     <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />

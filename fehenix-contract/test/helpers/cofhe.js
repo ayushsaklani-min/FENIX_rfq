@@ -76,6 +76,15 @@ async function decryptUint64ForTx(client, ctHash, usePermit = true) {
   return usePermit ? builder.withPermit().execute() : builder.withoutPermit().execute();
 }
 
+async function decryptAddressForTx(client, ctHash, usePermit = false) {
+  const builder = client.decryptForTx(ctHash);
+  const proof = usePermit ? await builder.withPermit().execute() : await builder.withoutPermit().execute();
+  return {
+    ...proof,
+    decryptedAddress: toAddressFromBigInt(proof.decryptedValue)
+  };
+}
+
 function toAddressFromBigInt(value) {
   return hre.ethers.getAddress(hre.ethers.toBeHex(value, 20));
 }
@@ -97,6 +106,7 @@ function dutchPrice({ startPrice, reservePrice, priceDecrement, startBlock, curr
 
 module.exports = {
   createClient,
+  decryptAddressForTx,
   decryptUint64ForTx,
   decryptUint64ForView,
   dutchPrice,

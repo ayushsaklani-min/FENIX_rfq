@@ -2,15 +2,15 @@
 
 import type { PublicClient, WalletClient } from 'viem';
 import {
-    CofhesdkErrorCode,
+    CofheErrorCode,
     Encryptable,
     FheTypes,
-    isCofhesdkError,
-    type CofhesdkClient,
+    isCofheError,
+    type CofheClient,
 } from '@cofhe/sdk';
 import { chains } from '@cofhe/sdk/chains';
 import type { Permit } from '@cofhe/sdk/permits';
-import { createCofhesdkClient, createCofhesdkConfig } from '@cofhe/sdk/web';
+import { createCofheClient, createCofheConfig } from '@cofhe/sdk/web';
 import { appChain } from '@/contexts/ProvableWalletProvider';
 import type { EncryptedBidInput } from './sealProtocol';
 
@@ -24,7 +24,7 @@ type DecryptForTxOptions = {
     permit?: Permit | string;
 };
 
-let cofheClient: CofhesdkClient | null = null;
+let cofheClient: CofheClient | null = null;
 let connectedClients: ConnectedClients | null = null;
 
 function getLiveBrowserClients(): ConnectedClients | null {
@@ -51,10 +51,10 @@ function getSupportedChain() {
     return chains.sepolia;
 }
 
-function getOrCreateClient(): CofhesdkClient {
+function getOrCreateClient(): CofheClient {
     if (!cofheClient) {
-        cofheClient = createCofhesdkClient(
-            createCofhesdkConfig({
+        cofheClient = createCofheClient(
+            createCofheConfig({
                 supportedChains: [getSupportedChain()],
             }),
         );
@@ -84,29 +84,29 @@ export function isCofheConnected(): boolean {
 }
 
 export function mapCofheError(error: unknown): string {
-    if (!isCofhesdkError(error)) {
+    if (!isCofheError(error)) {
         return error instanceof Error ? error.message : 'Unknown CoFHE error';
     }
 
     switch (error.code) {
-        case CofhesdkErrorCode.NotConnected:
-        case CofhesdkErrorCode.MissingWalletClient:
-        case CofhesdkErrorCode.MissingPublicClient:
+        case CofheErrorCode.NotConnected:
+        case CofheErrorCode.MissingWalletClient:
+        case CofheErrorCode.MissingPublicClient:
             return 'Connect your wallet on Ethereum Sepolia before using encrypted actions.';
-        case CofhesdkErrorCode.UnsupportedChain:
-        case CofhesdkErrorCode.ChainIdUninitialized:
+        case CofheErrorCode.UnsupportedChain:
+        case CofheErrorCode.ChainIdUninitialized:
             return 'Switch your wallet to Ethereum Sepolia and try again.';
-        case CofhesdkErrorCode.PermitNotFound:
+        case CofheErrorCode.PermitNotFound:
             return 'A decryption permit is missing. Approve a permit in your wallet and retry.';
-        case CofhesdkErrorCode.InvalidPermitData:
-        case CofhesdkErrorCode.InvalidPermitDomain:
+        case CofheErrorCode.InvalidPermitData:
+        case CofheErrorCode.InvalidPermitDomain:
             return 'The stored permit is invalid for this wallet or chain. Recreate the permit and retry.';
-        case CofhesdkErrorCode.DecryptFailed:
-        case CofhesdkErrorCode.DecryptReturnedNull:
+        case CofheErrorCode.DecryptFailed:
+        case CofheErrorCode.DecryptReturnedNull:
             return 'CoFHE decryption failed. Wait a moment and retry the request.';
-        case CofhesdkErrorCode.ZkPackFailed:
-        case CofhesdkErrorCode.ZkProveFailed:
-        case CofhesdkErrorCode.ZkVerifyFailed:
+        case CofheErrorCode.ZkPackFailed:
+        case CofheErrorCode.ZkProveFailed:
+        case CofheErrorCode.ZkVerifyFailed:
             return 'Encryption proof generation failed. Retry with a smaller encrypted payload.';
         default:
             return error.message;
@@ -130,7 +130,7 @@ export async function initCofheClient(
             await client.connect(publicClient as any, walletClient as any);
         }
 
-        await client.permits.getOrCreateSelfPermit();
+        await client.permits.getOrCreateSelfPermit(appChain.id, walletAccount);
         connectedClients = { publicClient, walletClient };
         return true;
     } catch (error) {
@@ -139,7 +139,7 @@ export async function initCofheClient(
     }
 }
 
-async function requireConnectedClient(): Promise<CofhesdkClient> {
+async function requireConnectedClient(): Promise<CofheClient> {
     const client = getOrCreateClient();
     const liveClients = getLiveBrowserClients();
 
@@ -174,7 +174,8 @@ async function requireConnectedClient(): Promise<CofhesdkClient> {
 export async function ensureSelfPermit(): Promise<Permit> {
     try {
         const client = await requireConnectedClient();
-        return await client.permits.getOrCreateSelfPermit();
+        const account = getConnectedAccountOrThrow();
+        return await client.permits.getOrCreateSelfPermit(appChain.id, account);
     } catch (error) {
         throw new Error(mapCofheError(error));
     }
@@ -182,7 +183,8 @@ export async function ensureSelfPermit(): Promise<Permit> {
 
 export async function getActivePermit(): Promise<Permit | undefined> {
     const client = await requireConnectedClient();
-    return client.permits.getActivePermit();
+    const account = getConnectedAccountOrThrow();
+    return client.permits.getActivePermit(appChain.id, account);
 }
 
 export async function encryptBidAmount(bidAmount: bigint): Promise<EncryptedBidInput> {
@@ -218,24 +220,30 @@ export async function decryptForTransaction(
     try {
         const client = await requireConnectedClient();
         const account = getConnectedAccountOrThrow();
+
+        if (options?.requirePermit !== false) {
+            await client.permits.getOrCreateSelfPermit(appChain.id, account);
+        }
+
         const builder = client
             .decryptForTx(normalizeCtHash(ctHash))
             .setAccount(account)
             .setChainId(appChain.id);
 
-        if (options?.requirePermit === false) {
-            return await builder.withoutPermit().execute();
-        }
+        const result =
+            options?.requirePermit === false
+                ? await builder.withoutPermit().execute()
+                : typeof options?.permit === 'string'
+                  ? await builder.withPermit(options.permit).execute()
+                  : options?.permit
+                    ? await builder.withPermit(options.permit).execute()
+                    : await builder.withPermit().execute();
 
-        if (options?.permit) {
-            if (typeof options.permit === 'string') {
-                return await builder.withPermit(options.permit).execute();
-            }
-            return await builder.withPermit(options.permit).execute();
-        }
-
-        await client.permits.getOrCreateSelfPermit();
-        return await builder.withPermit().execute();
+        return {
+            ctHash,
+            decryptedValue: result.decryptedValue,
+            signature: result.signature,
+        };
     } catch (error) {
         throw new Error(mapCofheError(error));
     }
@@ -243,24 +251,27 @@ export async function decryptForTransaction(
 
 export async function decryptForView(
     ctHash: bigint | string,
-    fheType: number = FheTypes.Uint64,
+    fheType: FheTypes = FheTypes.Uint64,
 ): Promise<bigint | boolean | string> {
     try {
         const client = await requireConnectedClient();
         const account = getConnectedAccountOrThrow();
-        await client.permits.getOrCreateSelfPermit();
-        return await client
+        await client.permits.getOrCreateSelfPermit(appChain.id, account);
+
+        const result = await client
             .decryptForView(normalizeCtHash(ctHash), fheType)
             .setAccount(account)
             .setChainId(appChain.id)
             .withPermit()
             .execute();
+
+        return result;
     } catch (error) {
         throw new Error(mapCofheError(error));
     }
 }
 
-export function getCofheClient(): CofhesdkClient | null {
+export function getCofheClient(): CofheClient | null {
     return cofheClient;
 }
 

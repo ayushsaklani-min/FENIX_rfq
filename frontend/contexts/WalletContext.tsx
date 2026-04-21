@@ -2,8 +2,8 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { useAccount, useConnect, useDisconnect, usePublicClient, useSignMessage, useWalletClient } from "wagmi";
-import { safeGetItem, safeSetItem, safeRemoveItem } from "@/lib/safeLocalStorage";
-import { authenticatedFetch, getAccessToken, setAccessToken, clearAccessToken } from "@/lib/authFetch";
+import { safeRemoveItem } from "@/lib/safeLocalStorage";
+import { authenticatedFetch, clearAccessToken } from "@/lib/authFetch";
 import { disconnectCofhe, initCofheClient } from "@/lib/cofheClient";
 
 export interface WalletConnectionError {
@@ -49,21 +49,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const clearSessionState = () => {
         clearAccessToken();
         safeRemoveItem("role");
+        safeRemoveItem("walletAddress");
         setRole(null);
     };
 
     useEffect(() => {
-        const storedRole = safeGetItem("role");
-        if (storedRole) setRole(storedRole);
         setReady(true);
     }, []);
 
-    // Sync wallet address to localStorage when it changes
     useEffect(() => {
-        if (walletAddress) {
-            safeSetItem("walletAddress", walletAddress);
-        } else {
-            safeRemoveItem("walletAddress");
+        if (!walletAddress) {
             clearSessionState();
             setSessionHydrating(false);
         }
@@ -82,14 +77,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         const syncSession = async () => {
             try {
-                const response = await fetch("/api/auth/me", {
+                const response = await authenticatedFetch("/api/auth/me", {
                     cache: "no-store",
-                    headers: getAccessToken()
-                        ? {
-                              Authorization: `Bearer ${getAccessToken()}`,
-                          }
-                        : undefined,
-                    credentials: "same-origin",
                 });
 
                 const payload = response.ok ? await response.json().catch(() => null) : null;
@@ -100,7 +89,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 }
 
                 if (sessionWallet === walletAddress.toLowerCase()) {
-                    safeSetItem("role", payload.data.role);
                     setRole(payload.data.role);
                     return;
                 }
@@ -152,7 +140,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     const clearConnectionError = () => setConnectionError(null);
 
-    const authenticateWalletSession = async (walletAddr: string) => {
+    const authenticateWalletSession = async (walletAddr: `0x${string}`) => {
         const challengeRes = await fetch("/api/auth/challenge", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -191,8 +179,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             throw new Error(connectData?.error?.message || "Failed to connect wallet");
         }
 
-        setAccessToken(connectData.data.accessToken ?? null);
-        safeSetItem("role", connectData.data.role);
         setRole(connectData.data.role);
 
         return connectData.data;
@@ -205,7 +191,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         try {
             // Resolve the wallet address — connect MetaMask first if needed
-            let walletAddr = address;
+            let walletAddr = address as `0x${string}` | undefined;
             if (!isConnected) {
                 const injectedConnector =
                     connectors.find((connector) => connector.type === 'injected') || connectors[0];
@@ -213,7 +199,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                     throw new Error('No wallet connector available');
                 }
                 const result = await connectAsync({ connector: injectedConnector });
-                walletAddr = result.accounts[0];
+                walletAddr = result.accounts[0] as `0x${string}`;
             }
 
             if (!walletAddr) {
@@ -257,7 +243,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (!walletAddress || !nextRole || nextRole === role || switchingRole) return false;
         setSwitchingRole(true);
         try {
-            let res = await authenticatedFetch("/api/auth/dev/switch-role", {
+            let res = await authenticatedFetch("/api/auth/switch-role", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ role: nextRole }),
@@ -265,7 +251,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
             if (res.status === 401) {
                 await authenticateWalletSession(walletAddress);
-                res = await authenticatedFetch("/api/auth/dev/switch-role", {
+                res = await authenticatedFetch("/api/auth/switch-role", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ role: nextRole }),
@@ -277,8 +263,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                 throw new Error(json?.error?.message || "Failed to switch role");
             }
 
-            setAccessToken(json.data.accessToken ?? null);
-            safeSetItem("role", json.data.role);
             setRole(json.data.role);
             return true;
         } catch (error: any) {

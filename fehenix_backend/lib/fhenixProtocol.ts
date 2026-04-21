@@ -1,15 +1,17 @@
 import { randomBytes } from 'crypto';
 import { z } from 'zod';
 
-// FheTypes enum matching @cofhe/sdk FheTypes
+// FheTypes enum aligned with @cofhe/sdk@0.4.0.
+// IMPORTANT: These values must match the SDK version used by the frontend/backend.
 export const FHE_TYPES = {
     BOOL: 0,
-    UINT8: 1,
-    UINT16: 2,
-    UINT32: 3,
-    UINT64: 4,
-    UINT128: 5,
-    UINT160: 6, // address
+    UINT4: 1,
+    UINT8: 2,
+    UINT16: 3,
+    UINT32: 4,
+    UINT64: 5,
+    UINT128: 6,
+    UINT160: 7, // address
 } as const;
 
 export const FHENIX_ENUMS = {

@@ -131,12 +131,6 @@ export function SecurityShowcase() {
                                 </div>
                             </div>
 
-                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-6">
-                                <div>
-                                    <p className="text-sm text-emerald-400">{securityShowcaseConfig.supportedAssetsLabel}</p>
-                                    <p className="text-lg text-white">{securityShowcaseConfig.supportedAssets}</p>
-                                </div>
-                            </div>
                         </div>
 
                         <div className="mt-12 flex items-center justify-center opacity-80 transition-opacity hover:opacity-100 lg:mt-16">

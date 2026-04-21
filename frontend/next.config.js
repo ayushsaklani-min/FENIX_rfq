@@ -41,11 +41,6 @@ const nextConfig = {
 
         return config;
     },
-
-    // Ignore TypeScript errors during build (CoFHE SDK has internal issues)
-    typescript: {
-        ignoreBuildErrors: true,
-    },
 };
 
 module.exports = nextConfig;

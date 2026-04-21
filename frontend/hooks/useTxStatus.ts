@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { safeGetItem } from '@/lib/safeLocalStorage';
+import { authenticatedFetch } from '@/lib/authFetch';
 
 export type TxStatus = 'PREPARED' | 'SUBMITTED' | 'CONFIRMED' | 'REJECTED' | 'EXPIRED';
 
@@ -31,11 +31,7 @@ export function useTxStatusOptimized({
 
         const fetchStatus = async () => {
             try {
-                const res = await fetch(`/api/tx/${txId}`, {
-                    headers: {
-                        Authorization: `Bearer ${localStorage.getItem('accessToken') || ''}`,
-                    },
-                });
+                const res = await authenticatedFetch(`/api/tx/${txId}`);
                 const data = await res.json();
 
                 if (data.status === 'success') {
@@ -97,11 +93,10 @@ export function useTxStatusOptimized({
 }
 
 export async function fetchBatchTxStatus(txIds: string[]) {
-    const res = await fetch('/api/tx/batch-status', {
+    const res = await authenticatedFetch('/api/tx/batch-status', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('accessToken') || ''}`,
         },
         body: JSON.stringify({ txIds }),
     });

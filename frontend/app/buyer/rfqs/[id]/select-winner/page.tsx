@@ -8,23 +8,21 @@ import {
     CopyableText,
     DataGrid,
     DataPoint,
-    Field,
     Notice,
     PageHeader,
     PageShell,
     Panel,
     PricingChip,
     StatusChip,
-    TextAreaInput,
     TokenChip,
 } from '@/components/protocol/ProtocolPrimitives';
 import { authenticatedFetch } from '@/lib/authFetch';
 import { fetchCurrentBlockHeight } from '@/lib/sepoliaClient';
 import { decryptForTransaction } from '@/lib/cofheClient';
-import { decodeWinnerProofShare } from '@/lib/fhenixWorkflow';
 import { formatAmount, PRICING_MODE } from '@/lib/sealProtocol';
 import { truncateMiddle } from '@/lib/utils';
 import { walletFirstTx } from '@/lib/walletTx';
+import { getAddress, toHex } from 'viem';
 
 type RfqDetail = {
     id: string;
@@ -35,6 +33,7 @@ type RfqDetail = {
     revealDeadline: number;
     biddingDeadline: number;
     lowestEncryptedBidCtHash: string;
+    lowestEncryptedBidderCtHash: string;
     lowestPublishedBid: string;
     lowestBidPublished: boolean;
     winnerBidId: string;
@@ -53,8 +52,6 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
     const [rfq, setRfq] = useState<RfqDetail | null>(null);
     const [bids, setBids] = useState<Bid[]>([]);
     const [currentBlock, setCurrentBlock] = useState<number | null>(null);
-    const [selectedBidId, setSelectedBidId] = useState<string | null>(null);
-    const [proofPackage, setProofPackage] = useState('');
     const [txHash, setTxHash] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [acting, setActing] = useState(false);
@@ -105,6 +102,34 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
         };
     }, [params.id]);
 
+    const closeBidding = async () => {
+        if (!rfq || acting) {
+            return;
+        }
+
+        setActing(true);
+        setError(null);
+        setSuccess(null);
+
+        try {
+            const result = await walletFirstTx(
+                `/api/fhenix/rfq/${encodeURIComponent(rfq.id)}/close`,
+                {},
+                (_prepareData, confirmedTxHash) => ({
+                    txHash: confirmedTxHash,
+                }),
+            );
+
+            setTxHash(result.txHash || null);
+            await loadSelectionState();
+            setSuccess('Bidding closed on-chain. The RFQ is now in the buyer proof window.');
+        } catch (caught: any) {
+            setError(caught?.message || 'Failed to close bidding.');
+        } finally {
+            setActing(false);
+        }
+    };
+
     const publishLowestBid = async () => {
         if (!rfq || acting) {
             return;
@@ -134,7 +159,7 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
 
             setTxHash(result.txHash || null);
             await loadSelectionState();
-            setSuccess('Lowest bid proof published on-chain. You can now select the winning bid with the bidder-provided proof package.');
+            setSuccess('Lowest bid proof published on-chain. After the buyer proof window closes, finalize the winner from the encrypted lowest-bidder handle.');
         } catch (caught: any) {
             setError(caught?.message || 'Failed to publish the lowest bid.');
         } finally {
@@ -143,7 +168,7 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
     };
 
     const selectWinner = async () => {
-        if (!rfq || !selectedBidId || acting) {
+        if (!rfq || acting) {
             return;
         }
 
@@ -152,24 +177,17 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
         setSuccess(null);
 
         try {
-            if (!proofPackage.trim()) {
-                throw new Error('Paste the vendor proof package first.');
-            }
-            const proof = decodeWinnerProofShare(proofPackage);
-            if (proof.bidId.toLowerCase() !== selectedBidId.toLowerCase()) {
-                throw new Error('The pasted proof package does not match the selected bid.');
-            }
+            const proof = await decryptForTransaction(rfq.lowestEncryptedBidderCtHash, { requirePermit: false });
+            const winnerAddress = getAddress(toHex(proof.decryptedValue, { size: 20 }));
 
             const result = await walletFirstTx(
                 `/api/fhenix/rfq/${encodeURIComponent(rfq.id)}/select-winner`,
                 {
-                    bidId: proof.bidId,
-                    plaintext: proof.plaintext,
+                    winnerAddress,
                     signature: proof.signature,
                 },
                 (_prepareData, confirmedTxHash) => ({
-                    bidId: proof.bidId,
-                    plaintext: proof.plaintext,
+                    winnerAddress,
                     signature: proof.signature,
                     txHash: confirmedTxHash,
                 }),
@@ -185,13 +203,23 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
         }
     };
 
+    const canCloseBidding = useMemo(() => {
+        return Boolean(rfq && currentBlock !== null && rfq.statusCode === 1 && currentBlock >= rfq.biddingDeadline);
+    }, [currentBlock, rfq]);
+
     const canPublishLowest = useMemo(() => {
-        return Boolean(rfq && currentBlock !== null && currentBlock >= rfq.biddingDeadline && !rfq.lowestBidPublished);
+        return Boolean(rfq && currentBlock !== null && rfq.statusCode === 2 && currentBlock >= rfq.biddingDeadline && !rfq.lowestBidPublished);
     }, [currentBlock, rfq]);
 
     const canSelectWinner = useMemo(() => {
-        return Boolean(rfq && rfq.lowestBidPublished && rfq.statusCode !== 3 && rfq.statusCode !== 4 && rfq.statusCode !== 5);
-    }, [rfq]);
+        return Boolean(
+            rfq &&
+                currentBlock !== null &&
+                rfq.statusCode === 2 &&
+                rfq.lowestBidPublished &&
+                currentBlock >= rfq.revealDeadline,
+        );
+    }, [currentBlock, rfq]);
 
     if (loading) {
         return (
@@ -216,7 +244,7 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
             <PageHeader
                 eyebrow="Buyer"
                 title="Finalize direct RFQ winner"
-                description="First publish the encrypted lowest bid proof, then paste the bidder’s shared proof package for the winning bid."
+                description="Close bidding if needed, publish the encrypted lowest bid, then finalize from the encrypted lowest-bidder handle."
                 actions={
                     <ActionBar>
                         <StatusChip status={rfq.status} />
@@ -237,6 +265,18 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
 
             <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
                 <div className="space-y-6">
+                    <Panel title="Step 0: Close bidding">
+                        <DataGrid columns={2}>
+                            <DataPoint label="Current status" value={rfq.status} />
+                            <DataPoint label="Bidding deadline" value={rfq.biddingDeadline} />
+                        </DataGrid>
+                        <ActionBar className="mt-4">
+                            <Button onClick={closeBidding} isLoading={acting} disabled={!canCloseBidding}>
+                                Close bidding
+                            </Button>
+                        </ActionBar>
+                    </Panel>
+
                     <Panel title="Step 1: Publish lowest bid">
                         <DataGrid columns={2}>
                             <DataPoint label="Bidding deadline" value={rfq.biddingDeadline} />
@@ -257,26 +297,29 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
                         </ActionBar>
                     </Panel>
 
-                    <Panel title="Step 2: Select winner">
-                        <div className="space-y-4">
-                            <Field label="Bidder proof package" hint="Paste the proof package shared by the winning vendor.">
-                                <TextAreaInput
-                                    value={proofPackage}
-                                    onChange={(event) => setProofPackage(event.target.value)}
-                                    placeholder="Paste the vendor proof package here"
-                                />
-                            </Field>
-                            <ActionBar>
-                                <Button onClick={selectWinner} isLoading={acting} disabled={!canSelectWinner || !selectedBidId}>
-                                    Select winner
-                                </Button>
-                                {rfq.statusCode === 3 ? (
-                                    <Link href={`/buyer/rfqs/${encodeURIComponent(rfq.id)}/fund-escrow`}>
-                                        <Button variant="secondary">Continue to escrow funding</Button>
-                                    </Link>
-                                ) : null}
-                            </ActionBar>
-                        </div>
+                    <Panel title="Step 2: Finalize lowest bidder">
+                        <DataGrid columns={2}>
+                            <DataPoint label="Reveal deadline" value={rfq.revealDeadline} />
+                            <DataPoint
+                                label="Lowest bidder ciphertext"
+                                value={
+                                    <CopyableText
+                                        value={rfq.lowestEncryptedBidderCtHash}
+                                        displayValue={truncateMiddle(rfq.lowestEncryptedBidderCtHash, 18, 12)}
+                                    />
+                                }
+                            />
+                        </DataGrid>
+                        <ActionBar className="mt-4">
+                            <Button onClick={selectWinner} isLoading={acting} disabled={!canSelectWinner}>
+                                Finalize winner
+                            </Button>
+                            {rfq.statusCode === 3 ? (
+                                <Link href={`/buyer/rfqs/${encodeURIComponent(rfq.id)}/fund-escrow`}>
+                                    <Button variant="secondary">Continue to escrow funding</Button>
+                                </Link>
+                            ) : null}
+                        </ActionBar>
                     </Panel>
                 </div>
 
@@ -287,12 +330,10 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
                         ) : (
                             <div className="space-y-3">
                                 {bids.map((bid) => (
-                                    <button
+                                    <div
                                         key={bid.bidId}
-                                        type="button"
-                                        onClick={() => setSelectedBidId(bid.bidId)}
                                         className={`w-full rounded-xl border p-4 text-left transition ${
-                                            selectedBidId === bid.bidId
+                                            rfq.winnerBidId?.toLowerCase() === bid.bidId.toLowerCase()
                                                 ? 'border-emerald-300 bg-emerald-50/10'
                                                 : 'border-slate-200 bg-slate-50/70'
                                         }`}
@@ -306,7 +347,7 @@ export default function SelectWinnerPage({ params }: { params: { id: string } })
                                                 value={bid.revealed ? formatAmount(bid.revealedAmount, rfq.tokenType) : 'Still encrypted'}
                                             />
                                         </DataGrid>
-                                    </button>
+                                    </div>
                                 ))}
                             </div>
                         )}
